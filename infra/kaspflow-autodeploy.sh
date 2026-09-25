@@ -22,7 +22,7 @@
 
 set -uo pipefail
 
-REPO_DIR="${REPO_DIR:-/home/ubuntu/kaspflow/crypto-realtime-dashboard}"
+REPO_DIR="${REPO_DIR:-/home/ubuntu/kaspflow}"
 GH_REPO="${GH_REPO:-}"                 # 예: "Jacob-9909/kaspflow" (비우면 CI 게이트 skip)
 COMPOSE="${COMPOSE:-docker-compose.prod.yml}"
 BRANCH="${BRANCH:-main}"

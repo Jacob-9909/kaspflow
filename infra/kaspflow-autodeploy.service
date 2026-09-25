@@ -14,11 +14,11 @@ Type=oneshot
 User=ubuntu
 # repo 위치/CI게이트 대상 등을 여기서 주입 (스크립트를 안 고치고 값만 바꾼다).
 # 이 파일은 git에 커밋해도 되지만, 값이 바뀌면 VM에서 직접 수정 후 daemon-reload.
-Environment=REPO_DIR=/home/ubuntu/kaspflow/crypto-realtime-dashboard
+Environment=REPO_DIR=/home/ubuntu/kaspflow
 Environment=GH_REPO=
 Environment=COMPOSE=docker-compose.prod.yml
 Environment=BRANCH=main
-ExecStart=/home/ubuntu/kaspflow/crypto-realtime-dashboard/infra/kaspflow-autodeploy.sh
+ExecStart=/home/ubuntu/kaspflow/infra/kaspflow-autodeploy.sh
 # 로그는 journald 로 (journalctl -u kaspflow-autodeploy)
 StandardOutput=journal
 StandardError=journal
