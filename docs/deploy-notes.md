@@ -134,3 +134,42 @@ Actions에서 SSH push가 아니라 **pull**인 이유: VM에 DB가 같이 돌�
 3. (나) §5 목록대로 `docker-compose.prod.yml` + autodeploy 스크립트/유닛 작성
 4. (Jacob) VM에서 podman compose 배포 트리거, (나) 로그 보며 디버깅
 ```
+
+
+---
+
+## 8. 실제 배포 기록 (2026-09-25 완료)
+
+VM(161.33.134.252, ubuntu, **arm64**)에 실제 배포 성공. end-to-end 동작 확인됨
+(Binance→Kafka→Spark→PG→API→대시보드). 배포하며 겪은 것/조치:
+
+1. **아키텍처: VM은 arm64(aarch64).** amd64-only 이미지는 pull 실패
+   (`no matching manifest for linux/arm64`). → `publish-images.yml` 에 QEMU +
+   `platforms: linux/amd64,linux/arm64` 추가해 멀티아치로 재빌드.
+2. **repo 루트 = `~/kaspflow`** (하위 `crypto-realtime-dashboard/` 없음).
+   autodeploy service의 `REPO_DIR`/`ExecStart` 를 `~/kaspflow` 로 맞춤.
+3. **컨테이너→호스트 PG 5432 차단**: INPUT 체인에 `DROP dpt:5432`(외부노출 방지)가
+   있어 docker 브리지 트래픽도 막혔다. → `sudo iptables -I INPUT 1 -s 172.16.0.0/12 -p tcp --dport 5432 -j ACCEPT`
+   (docker 대역만 허용, 외부는 계속 차단) + `netfilter-persistent save`.
+4. **kafka-ui 8080 충돌**: 호스트 8080을 supermemory-server가 사용 중.
+   → compose 에서 kafka-ui 를 `8090:8080` 으로 변경.
+5. **대시보드 8501**: `sudo iptables -I INPUT 1 --dport 8501 -j ACCEPT` + save.
+   ⚠️ **OCI 콘솔 VCN Security List 에 8501 ingress 는 Jacob 이 웹에서 추가해야**
+   외부 브라우저에서 `http://161.33.134.252:8501` 접속 가능. (VM 내부는 확인 완료)
+6. PG `crypto` DB: 테이블 owner=postgres 라 crypto 유저에 `GRANT ALL ON ALL TABLES`
+   + `ALTER DEFAULT PRIVILEGES` 부여함.
+7. 자동배포: `kaspflow-autodeploy.timer` enable(2분 폴링), service 의
+   `GH_REPO=Jacob-9909/kaspflow` (CI 게이트 켜짐), jq 설치됨.
+
+### 운영 명령 (VM)
+```bash
+cd ~/kaspflow
+sudo docker compose -f docker-compose.prod.yml ps          # 상태
+sudo docker compose -f docker-compose.prod.yml logs -f spark
+curl -s http://127.0.0.1:8000/health                        # {"status":"ok"}
+journalctl -u kaspflow-autodeploy -f                        # 자동배포 로그
+```
+
+### 남은 것 (Jacob)
+- [ ] **OCI 콘솔 VCN Security List: 8501/tcp ingress 추가** (외부 브라우저 접속용)
+- [ ] (선택) kafka-ui 도 외부에서 보려면 8090 도 VCN + iptables 열기
