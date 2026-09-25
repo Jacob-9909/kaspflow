@@ -22,3 +22,9 @@ pgdata/
 .idea/
 .vscode/
 .DS_Store
+
+# --- Frontend (dashboard, Vite+React) ---
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+*.tsbuildinfo

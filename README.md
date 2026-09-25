@@ -1,6 +1,6 @@
 # 실시간 암호화폐 시세 대시보드
 
-거래소(Binance) WebSocket 체결 스트림을 **Kafka → Spark Structured Streaming → PostgreSQL → FastAPI → Streamlit** 으로 흘려보내는 엔드투엔드 실시간 데이터 파이프라인 학습 프로젝트입니다.
+거래소(Binance) WebSocket 체결 스트림을 **Kafka → Spark Structured Streaming → PostgreSQL → FastAPI → React(Vite)** 로 흘려보내는 엔드투엔드 실시간 데이터 파이프라인 학습 프로젝트입니다. 대시보드는 TradingView의 `lightweight-charts` 로 캔들차트를 그립니다.
 
 설계 배경과 의사결정은 상위 폴더의 `crypto-realtime-dashboard-DESIGN.md` 를 참고하세요.
 
@@ -18,7 +18,7 @@
 | 2️⃣ | `spark/jobs/ohlc_stream.py` | Kafka **구독** → 1분봉 집계 → DB 저장 | 소비자(Consumer), 윈도우, 워터마크, 체크포인트 |
 | 3️⃣ | `db/init.sql` | 집계 결과가 저장되는 테이블 구조 | 스키마, upsert 충돌 키 |
 | 4️⃣ | `backend/app.py` | DB 조회 → JSON API | REST, 커넥션 풀 |
-| 5️⃣ | `dashboard/app.py` | API 호출 → 실시간 캔들차트 | 시각화, 폴링 |
+| 5️⃣ | `dashboard/src/App.tsx` | API 호출 → 실시간 캔들차트 | 시각화, 폴링, React 상태 |
 
 > 💡 **처음이라면**: `docker-compose.yml`(지도) → `producer`(입구) → `spark`(핵심) 순서만 봐도 Kafka와 Spark의 생산자–소비자 관계가 잡힙니다.
 
@@ -27,8 +27,8 @@
 ## 🏗️ 아키텍처
 
 ```
-거래소 WS ──> Producer ──> Kafka ──> Spark Streaming ──> PostgreSQL ──> FastAPI ──> Streamlit
- (Binance)   (produce)  (crypto-   (1분봉 OHLC 집계)     (저장)        (조회 API)   (차트)
+거래소 WS ──> Producer ──> Kafka ──> Spark Streaming ──> PostgreSQL ──> FastAPI ──> React(Vite)
+ (Binance)   (produce)  (crypto-   (1분봉 OHLC 집계)     (저장)        (조회 API)   (차트/nginx)
                          trades)
                             │
                             └─(모니터링)─> Kafka UI
@@ -87,6 +87,16 @@ docker compose down        # 컨테이너만 정리 (DB 데이터 유지)
 docker compose down -v      # 볼륨까지 삭제 (DB 초기화 — 스키마 바꿨을 때)
 ```
 
+### 4. (선택) 프론트엔드만 로컬에서 개발
+차트 UI를 빠르게 고치고 싶다면 대시보드만 로컬 dev 서버로 띄울 수 있습니다.
+백엔드는 compose로 켜둔 상태여야 합니다 (`localhost:8000`).
+```bash
+cd dashboard
+npm install
+npm run dev        # http://localhost:5173 (핫 리로드)
+```
+`vite.config.ts` 의 프록시가 `/api` 요청을 `localhost:8000` 으로 전달하므로 CORS 설정이 필요 없습니다.
+
 ---
 
 ## 🔍 동작 확인 체크리스트
@@ -132,10 +142,15 @@ crypto-realtime-dashboard/
 │   ├── app.py
 │   ├── requirements.txt
 │   └── Dockerfile
-├── dashboard/               # 5️⃣ API → 실시간 차트
-│   ├── app.py
-│   ├── requirements.txt
-│   └── Dockerfile
+├── dashboard/               # 5️⃣ API → 실시간 차트 (React + Vite + lightweight-charts)
+│   ├── src/
+│   │   ├── main.tsx         #   진입점 (여기부터 실행)
+│   │   ├── App.tsx          #   폴링 + 상태 + 레이아웃
+│   │   ├── api.ts           #   백엔드 호출 + 타입
+│   │   └── components/      #   CandleChart, SymbolSelector
+│   ├── nginx.conf           #   정적 서빙 + /api 프록시 (CORS 회피)
+│   ├── package.json
+│   └── Dockerfile           #   멀티스테이지: node 빌드 → nginx 서빙
 └── README.md
 ```
 

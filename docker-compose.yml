@@ -8,7 +8,7 @@
 #   4) producer  : 거래소 WebSocket -> Kafka (직접 만든 서비스)
 #   5) spark     : Kafka 구독 -> 1분봉 집계 -> Postgres (직접 만든 서비스)
 #   6) backend   : Postgres 조회 REST API (FastAPI)
-#   7) dashboard : 실시간 차트 (Streamlit)
+#   7) dashboard : 실시간 차트 (React + Vite, nginx로 서빙)
 #
 # 처음엔 인프라(kafka, kafka-ui)만 확인하고 싶다면:
 #   docker compose up kafka kafka-ui
@@ -154,8 +154,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crypto}
 
   # ----------------------------------------------------------
-  # 7) Dashboard — Streamlit 실시간 차트
+  # 7) Dashboard — React(Vite) 빌드물을 nginx로 서빙
   #    http://localhost:8501 접속
+  #    nginx가 /api 요청을 backend(FastAPI)로 프록시하므로 CORS 불필요.
   # ----------------------------------------------------------
   dashboard:
     build: ./dashboard
@@ -163,10 +164,8 @@ services:
     depends_on:
       - backend
     ports:
-      - "8501:8501"
-    environment:
-      # 대시보드는 backend API를 통해 데이터를 읽는다
-      BACKEND_URL: "http://backend:8000"
+      # 호스트 8501 -> 컨테이너 80(nginx)
+      - "8501:80"
 
 # 이름있는 볼륨: 컨테이너를 지워도 DB 데이터는 유지된다
 volumes:
