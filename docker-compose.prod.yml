@@ -65,7 +65,8 @@ services:
       kafka:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      # 호스트 8080이 다른 서비스(supermemory 등)와 겹칠 수 있어 8090으로 노출
+      - "8090:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: "local"
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
