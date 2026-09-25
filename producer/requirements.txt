@@ -1,0 +1,4 @@
+# WebSocket 클라이언트 (거래소 실시간 스트림 구독)
+websockets==12.0
+# Kafka 프로듀서 (C 라이브러리 기반, 빠르고 안정적)
+confluent-kafka==2.5.3

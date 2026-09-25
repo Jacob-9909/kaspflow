@@ -1,0 +1,173 @@
+# ============================================================
+# 전체 스택 오케스트레이션
+# ------------------------------------------------------------
+# 이 파일 하나로 아래 서비스를 모두 띄운다:
+#   1) kafka     : 메시지 브로커 (체결 이벤트 버퍼)
+#   2) kafka-ui  : 토픽/메시지를 눈으로 확인하는 웹 UI
+#   3) postgres  : 집계 결과 저장소
+#   4) producer  : 거래소 WebSocket -> Kafka (직접 만든 서비스)
+#   5) spark     : Kafka 구독 -> 1분봉 집계 -> Postgres (직접 만든 서비스)
+#   6) backend   : Postgres 조회 REST API (FastAPI)
+#   7) dashboard : 실시간 차트 (Streamlit)
+#
+# 처음엔 인프라(kafka, kafka-ui)만 확인하고 싶다면:
+#   docker compose up kafka kafka-ui
+# 전체를 다 띄우려면:
+#   docker compose up --build
+# ============================================================
+
+services:
+  # ----------------------------------------------------------
+  # 1) Kafka (KRaft 모드 = Zookeeper 없이 단독 실행)
+  #    - broker와 controller 역할을 한 컨테이너가 겸한다 (단일 노드 학습용).
+  # ----------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: kafka
+    ports:
+      # 호스트(내 노트북)에서 붙을 때는 localhost:19092 (EXTERNAL 리스너)
+      # 컨테이너 내부 서비스는 kafka:9092 (INTERNAL 리스너)를 쓴다.
+      - "19092:19092"
+    environment:
+      # --- KRaft 필수 설정 ---
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"          # 두 역할 겸임
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"    # 컨트롤러 정족수(자기 자신)
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+
+      # --- 리스너(접속 경로) 설정 ---
+      # 중요: 컨테이너 내부(다른 서비스)와 호스트(내 노트북)는 접속 주소가 다르다.
+      #   - INTERNAL(kafka:9092)  : producer/spark 같은 컨테이너가 사용
+      #   - EXTERNAL(localhost:9092): 내 노트북에서 직접 붙을 때 사용
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,EXTERNAL://0.0.0.0:19092"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:9092,EXTERNAL://localhost:19092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+
+      # --- 단일 노드용 복제 설정 (노드가 1개라 replica도 1) ---
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+      # KRaft 클러스터를 처음 포맷할 때 쓰는 고정 ID (아무 값이나 22자 base64)
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    healthcheck:
+      # 브로커가 응답할 때까지 다른 서비스가 기다릴 수 있도록 상태 체크
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ----------------------------------------------------------
+  # 2) Kafka UI — 브라우저에서 http://localhost:8080 접속
+  #    토픽 목록, 파티션, 메시지 내용, 컨슈머 그룹을 눈으로 확인.
+  # ----------------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy   # kafka가 건강해진 뒤에 뜬다
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "local"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
+
+  # ----------------------------------------------------------
+  # 3) PostgreSQL — 집계 결과(1분봉, 알림) 저장
+  #    최초 기동 시 db/init.sql 이 자동 실행되어 테이블이 생성된다.
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crypto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crypto}
+      POSTGRES_DB: ${POSTGRES_DB:-crypto}
+    volumes:
+      # /docker-entrypoint-initdb.d 안의 .sql은 DB 최초 생성 시 자동 실행됨
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crypto}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ----------------------------------------------------------
+  # 4) Producer — 거래소 WebSocket 구독 후 Kafka로 produce
+  # ----------------------------------------------------------
+  producer:
+    build: ./producer
+    container_name: producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-crypto-trades}
+      SYMBOLS: ${SYMBOLS:-KRW-BTC,KRW-ETH,KRW-XRP}
+    restart: unless-stopped   # WebSocket이 죽어도 컨테이너 재시작
+
+  # ----------------------------------------------------------
+  # 5) Spark — Structured Streaming 잡 실행
+  #    Kafka 구독 -> 1분 OHLC 집계 -> Postgres 저장
+  # ----------------------------------------------------------
+  spark:
+    build: ./spark
+    container_name: spark
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-crypto-trades}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-crypto}
+      POSTGRES_USER: ${POSTGRES_USER:-crypto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crypto}
+
+  # ----------------------------------------------------------
+  # 6) Backend API — Postgres 조회 결과를 JSON으로 제공
+  #    http://localhost:8000/docs 에서 API 문서 확인 가능
+  # ----------------------------------------------------------
+  backend:
+    build: ./backend
+    container_name: backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-crypto}
+      POSTGRES_USER: ${POSTGRES_USER:-crypto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crypto}
+
+  # ----------------------------------------------------------
+  # 7) Dashboard — Streamlit 실시간 차트
+  #    http://localhost:8501 접속
+  # ----------------------------------------------------------
+  dashboard:
+    build: ./dashboard
+    container_name: dashboard
+    depends_on:
+      - backend
+    ports:
+      - "8501:8501"
+    environment:
+      # 대시보드는 backend API를 통해 데이터를 읽는다
+      BACKEND_URL: "http://backend:8000"
+
+# 이름있는 볼륨: 컨테이너를 지워도 DB 데이터는 유지된다
+volumes:
+  pgdata:
