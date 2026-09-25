@@ -10,8 +10,9 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 # 의존성 먼저 설치 (package.json 변경 없으면 캐시 재사용)
-COPY package.json package-lock.json* ./
-RUN npm install
+# npm ci: package-lock.json 기준 정확 재현 설치 (이미지 빌드 재현성 ↑)
+COPY package.json package-lock.json ./
+RUN npm ci
 
 # 소스 복사 후 프로덕션 빌드 (tsc 타입체크 + vite build)
 COPY . .

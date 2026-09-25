@@ -3,4 +3,4 @@ fastapi==0.115.0
 # ASGI 서버 (FastAPI 실행)
 uvicorn[standard]==0.30.6
 # PostgreSQL 드라이버 (psycopg 3, 커넥션 풀 포함)
-psycopg[binary,pool]==3.2.1
+psycopg[binary,pool]==3.2.4

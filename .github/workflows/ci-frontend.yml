@@ -1,0 +1,48 @@
+# ============================================================
+# CI: Frontend (dashboard) 빌드 검증
+# ------------------------------------------------------------
+# 언제 도나:
+#   - main 으로의 PR, 또는 main 에 push 될 때
+#   - 단, dashboard/ 경로가 바뀐 경우에만 (paths 필터) -> 불필요한 실행 방지
+# 무엇을 하나:
+#   npm ci 로 정확한 버전 설치 -> npm run build (tsc 타입체크 + vite 빌드)
+#   빌드가 깨지면 여기서 실패하므로, 깨진 프론트엔드가 main 에 들어가는 걸 막는다.
+# ============================================================
+name: CI Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dashboard/**"
+      - ".github/workflows/ci-frontend.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "dashboard/**"
+      - ".github/workflows/ci-frontend.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard # 모든 스텝을 dashboard/ 에서 실행
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Node 설정 (+ npm 캐시)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
+
+      # npm ci: package-lock.json 기준으로 정확히 재현 설치 (CI 권장)
+      - name: 의존성 설치
+        run: npm ci
+
+      # tsc --noEmit(타입체크) + vite build. 둘 중 하나라도 실패하면 잡 실패.
+      - name: 빌드 (타입체크 + 번들)
+        run: npm run build

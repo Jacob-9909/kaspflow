@@ -1,0 +1,67 @@
+# ============================================================
+# CI: Backend + Python 서비스(producer) 검증
+# ------------------------------------------------------------
+# 언제 도나:
+#   - main 으로의 PR, 또는 main 에 push 될 때
+#   - backend/ 또는 producer/ 경로가 바뀐 경우에만 (paths 필터)
+# 무엇을 하나:
+#   1) backend: 의존성 설치 후 app 모듈이 import 되는지 확인 (스모크 테스트)
+#      -> FastAPI 앱이 문법/의존성 오류 없이 로드되는지 검증.
+#      -> DB 연결 풀은 open=False 라 import 시점에 실제 접속하지 않으므로 CI에서 안전.
+#   2) producer: 의존성 설치 후 문법/컴파일 확인.
+#   (spark 잡은 pyspark 런타임이 무거워 CI에선 py_compile 만 수행)
+#
+# 참고: 아직 유닛 테스트가 없어 "import/compile 이 깨지지 않는지"까지 검증한다.
+#       테스트가 추가되면 아래에 pytest 스텝을 넣으면 된다.
+# ============================================================
+name: CI Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "producer/**"
+      - "spark/**"
+      - ".github/workflows/ci-backend.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "producer/**"
+      - "spark/**"
+      - ".github/workflows/ci-backend.yml"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정 (+ pip 캐시)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: backend 의존성 설치
+        run: pip install -r backend/requirements.txt
+
+      # FastAPI 앱이 import 되는지 확인 (import 만으로 DB 접속하지 않음).
+      - name: backend import 스모크 테스트
+        working-directory: backend
+        run: python -c "import app; print('backend app import OK')"
+
+      - name: producer 의존성 설치
+        run: pip install -r producer/requirements.txt
+
+      # producer 는 import 시 Kafka Producer 를 만들지 않고(함수 안에서 생성),
+      # 모듈 로드만으로 문법/의존성을 검증할 수 있다.
+      - name: producer import 스모크 테스트
+        working-directory: producer
+        run: python -c "import main; print('producer main import OK')"
+
+      # spark 잡은 pyspark 런타임이 무거우므로 문법 컴파일만 확인.
+      - name: spark 잡 문법 체크
+        run: python -m py_compile spark/jobs/ohlc_stream.py && echo "spark job compile OK"

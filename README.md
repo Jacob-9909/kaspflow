@@ -165,8 +165,54 @@ crypto-realtime-dashboard/
 
 ---
 
+## 🤖 CI/CD (GitHub Actions)
+
+`.github/workflows/` 에 3개의 워크플로가 있습니다. 경로(paths) 필터로 **바뀐 부분만** 돌게 해서 낭비를 줄였습니다.
+
+| 워크플로 | 언제 | 무엇을 |
+| --- | --- | --- |
+| `ci-frontend.yml` | `dashboard/**` 변경 PR/push | `npm ci` → `npm run build` (타입체크 + 빌드) |
+| `ci-backend.yml` | `backend/` `producer/` `spark/` 변경 PR/push | 의존성 설치 + import/compile 스모크 |
+| `publish-images.yml` | `main` push (또는 수동 실행) | 4개 서비스 이미지 빌드 → **GHCR** push |
+
+### 이미지 위치 (GHCR)
+`main` 에 머지되면 아래 이미지가 자동으로 올라갑니다 (`<owner>/<repo>` 는 소문자):
+```
+ghcr.io/<owner>/<repo>-backend:latest
+ghcr.io/<owner>/<repo>-dashboard:latest
+ghcr.io/<owner>/<repo>-producer:latest
+ghcr.io/<owner>/<repo>-spark:latest
+```
+각 이미지에 `:latest` 와 `:sha-<커밋>` 태그가 붙습니다.
+
+> **최초 1회 설정**: 리포지토리 → Settings → Actions → General → "Workflow permissions" 에서
+> **Read and write permissions** 가 켜져 있어야 GHCR push가 됩니다.
+> push된 패키지는 기본 private이며, 리포지토리 → Packages 에서 확인/공개설정할 수 있습니다.
+
+### CD (Oracle VM 배포) — 집에서 이어붙이기
+지금은 **이미지 push까지**만 되어 있습니다(B단계). Oracle VM 에서 배포하려면:
+
+1. **배포용 compose 준비**: 지금 `docker-compose.yml` 은 `build:` 로 로컬 빌드합니다.
+   배포 서버에서는 빌드 대신 **미리 만든 이미지를 pull** 하도록, `image:` 를 쓰는
+   `docker-compose.prod.yml` 을 따로 두면 깔끔합니다. (예: `image: ghcr.io/<owner>/<repo>-backend:latest`)
+2. **VM에서 GHCR 로그인** (이미지가 private이면):
+   ```bash
+   echo <GITHUB_TOKEN> | docker login ghcr.io -u <github-user> --password-stdin
+   ```
+3. **배포 실행**:
+   ```bash
+   docker compose -f docker-compose.prod.yml pull
+   docker compose -f docker-compose.prod.yml up -d
+   ```
+4. **(자동화)** `publish-images.yml` 뒤에 배포 잡을 추가해 SSH로 위 3번을 실행하면 완전 자동 CD가 됩니다.
+   그때 GitHub 리포 Secrets 에 `ORACLE_VM_HOST`, `ORACLE_VM_USER`, `ORACLE_VM_SSH_KEY` 를 넣고
+   `appleboy/ssh-action` 같은 액션으로 접속하면 됩니다. (VM 접속 가능해지면 이 부분을 채우면 됨)
+
+---
+
 ## 🧭 다음 단계 (후속 아이디어)
 
+- **CD 완성**: Oracle VM SSH 배포 잡 추가 (위 CI/CD 섹션 참고).
 - 거래량 급증 탐지 → `price_alert` 테이블 채우기 (스키마는 이미 준비됨).
 - 이동평균/볼린저 밴드 등 추가 지표.
 - 여러 거래소 동시 수집 → 거래소 간 가격차(김프) 모니터링.

@@ -1,0 +1,84 @@
+# ============================================================
+# CD (B단계): Docker 이미지 빌드 -> GHCR(GitHub Container Registry) push
+# ------------------------------------------------------------
+# 언제 도나:
+#   - main 에 push 될 때 (= PR 머지 시)
+#   - 수동 실행(workflow_dispatch)도 허용
+# 무엇을 하나:
+#   4개 서비스(backend / dashboard / producer / spark)를 각각 이미지로 빌드해
+#   ghcr.io/<OWNER>/<REPO>-<서비스> 로 push 한다.
+#   태그: latest + 커밋 SHA (예: :latest, :sha-1a2b3c4)
+#
+# 인증:
+#   GHCR는 자동 제공되는 GITHUB_TOKEN 으로 로그인한다 (별도 시크릿 불필요).
+#   단, 아래 permissions.packages: write 가 반드시 있어야 push 권한이 생긴다.
+#
+# 참고(집에서 CD 이어붙일 때):
+#   여기서 push 된 이미지를 Oracle VM 에서 `docker compose pull && up -d` 로
+#   내려받아 실행하면 배포가 된다. 이 워크플로 맨 아래에 배포 잡을 추가하면 됨.
+# ============================================================
+name: Publish Images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {} # Actions 탭에서 수동 실행 가능
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # GHCR push 에 필요
+
+    strategy:
+      # 한 서비스가 실패해도 나머지는 계속 빌드
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+          - name: dashboard
+            context: ./dashboard
+          - name: producer
+            context: ./producer
+          - name: spark
+            context: ./spark
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      # 멀티플랫폼/캐시 빌드를 위한 Buildx
+      - name: Buildx 설정
+        uses: docker/setup-buildx-action@v3
+
+      # GHCR 로그인 (GITHUB_TOKEN 사용, 시크릿 설정 불필요)
+      - name: GHCR 로그인
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 이미지 이름/태그 자동 생성.
+      # images: ghcr.io/<owner>/<repo>-<service>  (repo 이름은 소문자로 강제됨)
+      - name: 태그/라벨 메타데이터 생성
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-${{ matrix.name }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - name: 빌드 & push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GitHub Actions 캐시로 재빌드 가속
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
