@@ -1,0 +1,144 @@
+# ============================================================
+# 프로덕션 compose (Oracle VM 배포용)
+# ------------------------------------------------------------
+# 로컬 개발용 docker-compose.yml 과의 차이:
+#   1) 이미지를 로컬 빌드(build:)하지 않고 GHCR에서 pull (image:)
+#   2) postgres 컨테이너 없음 → VM에 이미 깔린 네이티브 PostgreSQL 17 재사용
+#      (컨테이너들은 host.docker.internal:5432 로 호스트 PG에 붙는다)
+#   3) Spark 에 메모리 상한을 걸어 호스트(PG 포함)를 OOM 에서 보호
+#
+# 사용:
+#   # 이미지 태그(레포 소문자)와 DB 접속정보는 .env 로 주입
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# .env 에 필요한 값 (VM에만 두고 git 에는 커밋 금지):
+#   IMAGE_PREFIX=ghcr.io/<owner>/<repo>       예: ghcr.io/jacob-9909/kaspflow
+#   IMAGE_TAG=latest                          (또는 sha-xxxxxxx)
+#   KAFKA_TOPIC=crypto-trades
+#   SYMBOLS=BTCUSDT,ETHUSDT,XRPUSDT
+#   POSTGRES_HOST=host.docker.internal
+#   POSTGRES_PORT=5432
+#   POSTGRES_DB=crypto
+#   POSTGRES_USER=crypto
+#   POSTGRES_PASSWORD=<강한암호>
+# ============================================================
+
+services:
+  # ----------------------------------------------------------
+  # Kafka (KRaft) — 로컬 compose와 동일 구성, 이미지만 그대로 사용
+  # ----------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,EXTERNAL://0.0.0.0:19092"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:9092,EXTERNAL://localhost:19092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    # 메모리 상한: 12GB VM에서 안전하게
+    mem_limit: 1500m
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ----------------------------------------------------------
+  # Kafka UI — 운영 중 토픽/메시지 확인용 (선택, 8080)
+  # ----------------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "local"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
+    mem_limit: 400m
+
+  # ----------------------------------------------------------
+  # Producer — GHCR 이미지
+  # ----------------------------------------------------------
+  producer:
+    image: ${IMAGE_PREFIX}-producer:${IMAGE_TAG:-latest}
+    container_name: producer
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-crypto-trades}
+      SYMBOLS: ${SYMBOLS:-BTCUSDT,ETHUSDT,XRPUSDT}
+    mem_limit: 300m
+
+  # ----------------------------------------------------------
+  # Spark — GHCR 이미지. 호스트 PostgreSQL(host.docker.internal)로 저장.
+  #   메모리 상한 + driver memory 로 호스트 보호.
+  # ----------------------------------------------------------
+  spark:
+    image: ${IMAGE_PREFIX}-spark:${IMAGE_TAG:-latest}
+    container_name: spark
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    # 호스트 게이트웨이를 host.docker.internal 이름으로 접근 가능하게
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-crypto-trades}
+      POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-crypto}
+      POSTGRES_USER: ${POSTGRES_USER:-crypto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 설정하세요}
+    mem_limit: 2g
+
+  # ----------------------------------------------------------
+  # Backend API — GHCR 이미지. 호스트 PostgreSQL 조회. (8000)
+  # ----------------------------------------------------------
+  backend:
+    image: ${IMAGE_PREFIX}-backend:${IMAGE_TAG:-latest}
+    container_name: backend
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-crypto}
+      POSTGRES_USER: ${POSTGRES_USER:-crypto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 설정하세요}
+    mem_limit: 400m
+
+  # ----------------------------------------------------------
+  # Dashboard — GHCR 이미지(nginx). backend로 /api 프록시. (8501)
+  # ----------------------------------------------------------
+  dashboard:
+    image: ${IMAGE_PREFIX}-dashboard:${IMAGE_TAG:-latest}
+    container_name: dashboard
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8501:80"
+    mem_limit: 200m

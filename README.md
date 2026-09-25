@@ -190,23 +190,24 @@ ghcr.io/<owner>/<repo>-spark:latest
 > push된 패키지는 기본 private이며, 리포지토리 → Packages 에서 확인/공개설정할 수 있습니다.
 
 ### CD (Oracle VM 배포) — 집에서 이어붙이기
-지금은 **이미지 push까지**만 되어 있습니다(B단계). Oracle VM 에서 배포하려면:
+### CD (Oracle VM 배포)
+배포용 파일이 준비되어 있습니다. **VM은 Docker + 네이티브 PostgreSQL 17**(컨테이너 아님) 조합입니다.
 
-1. **배포용 compose 준비**: 지금 `docker-compose.yml` 은 `build:` 로 로컬 빌드합니다.
-   배포 서버에서는 빌드 대신 **미리 만든 이미지를 pull** 하도록, `image:` 를 쓰는
-   `docker-compose.prod.yml` 을 따로 두면 깔끔합니다. (예: `image: ghcr.io/<owner>/<repo>-backend:latest`)
-2. **VM에서 GHCR 로그인** (이미지가 private이면):
-   ```bash
-   echo <GITHUB_TOKEN> | docker login ghcr.io -u <github-user> --password-stdin
-   ```
-3. **배포 실행**:
-   ```bash
-   docker compose -f docker-compose.prod.yml pull
-   docker compose -f docker-compose.prod.yml up -d
-   ```
-4. **(자동화)** `publish-images.yml` 뒤에 배포 잡을 추가해 SSH로 위 3번을 실행하면 완전 자동 CD가 됩니다.
-   그때 GitHub 리포 Secrets 에 `ORACLE_VM_HOST`, `ORACLE_VM_USER`, `ORACLE_VM_SSH_KEY` 를 넣고
-   `appleboy/ssh-action` 같은 액션으로 접속하면 됩니다. (VM 접속 가능해지면 이 부분을 채우면 됨)
+- `docker-compose.prod.yml` — 이미지를 GHCR에서 pull, **postgres 컨테이너 없이 호스트 PG17 사용**(`host.docker.internal`), Spark 메모리 상한 포함
+- `.env.prod.example` — 프로덕션 `.env` 템플릿 (이미지 태그·DB 접속정보)
+- `infra/vm-setup.md` — **최초 1회 셋업 런북** (Docker 설치 → PG `crypto` DB → 방화벽 → 배포)
+- `infra/kaspflow-autodeploy.{sh,service,timer}` — main 폴링 자동배포 (2분 주기, CI 게이트 + 헬스체크 + 롤백)
+
+배포 방식은 **VM이 main을 폴링**하는 pull 방식입니다 (SSH 키를 레포 시크릿에 두지 않아 안전 — midas 패턴 재사용).
+
+빠른 시작 (자세한 건 `infra/vm-setup.md`):
+```bash
+ssh oracle_vm
+curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER && newgrp docker
+# PG crypto DB 생성 + init.sql 적용 + pg_hba/listen 설정 (런북 §2~3)
+cd ~/kaspflow/crypto-realtime-dashboard && cp .env.prod.example .env && nano .env
+docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+```
 
 ---
 

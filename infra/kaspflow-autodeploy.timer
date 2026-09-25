@@ -1,0 +1,13 @@
+# kaspflow 자동배포 타이머 — 2분마다 폴링 서비스를 깨운다.
+[Unit]
+Description=kaspflow 자동배포 2분 주기 실행
+
+[Timer]
+# 부팅 1분 후 첫 실행, 이후 2분 간격
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=kaspflow-autodeploy.service
+
+[Install]
+WantedBy=timers.target

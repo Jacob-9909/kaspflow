@@ -1,8 +1,8 @@
-# 배포 메모 (Oracle VM) — 다음 세션에서 이어서
+# 배포 메모 (Oracle VM) — CD 진행 중
 
-> 이 파일은 "집에 가서 oracle_vm에 이어서 배포" 할 때 바로 쓰려고 남긴 메모다.
-> CD(실제 배포)는 아직 안 만들었고, 지금은 **GHCR 이미지 push까지(B단계)** 완료 상태.
-> 관련: 루트 `README.md` 의 "CI/CD" 섹션, `.github/workflows/publish-images.yml`.
+> CD(실제 배포) 파일들을 이 세션에서 작성했다: `docker-compose.prod.yml`, `infra/kaspflow-autodeploy.*`.
+> VM에서 실제 실행(Docker 설치, DB 생성, 방화벽, 배포)은 Jacob이 §4·§7 순서로 진행한다.
+> 관련: 루트 `README.md` "CI/CD" 섹션, `.github/workflows/publish-images.yml`.
 
 ---
 
@@ -17,73 +17,54 @@ Host oracle_vm db
     IdentityFile ~/.ssh/id_ed25519
 ```
 
-- 사양: **2 OCPU / 12GB RAM**, Ubuntu 22.04, 디스크 여유 넉넉(~181GB)
-- 컨테이너 런타임: **Podman 확정.** Docker로 전환하지 않는다.
-  우리 GHCR 이미지와 compose 파일은 Podman에서 그대로 쓸 수 있다.
-  (아래 §3은 "안 되는 제약"이 아니라 Docker와의 **명령어/방식 차이** 가이드다.)
-- 기존 운영: midas-touch (백엔드 uv+systemd, Postgres/Neo4j 호스트 systemd)
+- 사양: **2 OCPU / 12GB RAM**, Ubuntu 22.04.5 LTS, 디스크 여유 넉넉(~181GB)
+- 컨테이너 런타임: **없음 → Docker 새로 설치한다.**
+  (2026-09-25 실측: podman/docker 둘 다 미설치. 그래서 자유롭게 Docker 선택.
+   우리 GHCR 이미지/compose가 전부 Docker 기준이라 가장 매끄럽다.)
+- **PostgreSQL 17 + pgvector: 이미 apt로 설치됨(현재 중지 상태).**
+  이걸 네이티브로 그대로 재사용한다(재설치 안 함). kaspflow는 postgres 컨테이너를 안 띄운다.
+- Neo4j: **없음** (설치 흔적 없음 → 내릴 것도 없음).
+- midas-touch: `~/midas-touch` 디렉터리는 있으나 **이 VM에 실제 배포는 안 된 상태**
+  (80/443 방화벽 단계에서 멈춤. bash_history로 확인). 즉 지금 VM은 거의 백지.
 
 ---
 
-## 2. 이번 배포 결정 (2026-09-25)
+## 2. 이번 배포 결정 (2026-09-25 실측 기준 갱신)
 
-- **Neo4j 내린다** → 메모리 회수 (midas가 쓰던 ~3.2GB 중 상당분).
-- **Postgres 1개를 공유한다** → kaspflow는 자체 postgres 컨테이너를 띄우지 않고
-  호스트의 기존 Postgres에 붙되, **별도 DB(`crypto`)** 로 분리해 midas와 섞이지 않게 한다.
-- 이러면 한 VM에서 midas + kaspflow 동시 운영이 메모리상 현실적이다
-  (Kafka ~1GB + Spark 상한 ~1.5GB + producer/backend/nginx ~0.5GB ≈ 3~3.5GB).
+- **Postgres는 네이티브(기존 PG17) 재사용.** kaspflow는 postgres 컨테이너를 안 띄우고
+  호스트 PG17에 붙되, **별도 DB(`crypto`)** 로 분리한다. (Jacob이 "PG 이미 깔려있어서" 선택)
+- **나머지(Kafka/Spark/Producer/Backend/Dashboard)는 Docker 컨테이너.** GHCR 이미지 pull.
+  Kafka↔Spark 버전 호환이 이미지에 고정돼 있어 네이티브 설치 삽질을 피한다.
+- Neo4j: 없음(할 것 없음). midas: 이 VM에 미배포(충돌 걱정 없음).
+- 메모리: 현재 available ~8.5Gi + swap 4Gi. Kafka ~1GB + Spark 상한 ~1.5GB +
+  producer/backend/nginx ~0.5GB ≈ 3~3.5GB → 여유 충분.
 
-### 집에 가서 가장 먼저 확인할 것
+### 집에서 실행 순서 요약 (자세한 명령은 §4, §7)
 ```bash
-ssh oracle_vm 'podman --version; free -h; systemctl is-active postgresql neo4j'
+# 0) 접속 + 현재 상태 확인
+ssh oracle_vm 'free -h; systemctl status postgresql@17-main --no-pager | head -3; docker --version 2>/dev/null || echo "docker 없음"'
 ```
+- Neo4j 백업/내리기: **불필요** (없음).
+- Postgres 백업: 기존 PG17에 midas 데이터가 있을 수도 있으니, DB 만지기 전 스냅샷 1회 권장:
+  ```bash
+  ssh oracle_vm 'sudo systemctl start postgresql@17-main && sudo -u postgres pg_dumpall > /var/backups/pg_all_$(date +%F).sql 2>/dev/null; ls -lh /var/backups/pg_all_* 2>/dev/null || echo "빈 DB거나 백업 생략됨"'
+  ```
 
-### Neo4j 내리기 전 — 데이터 백업 (VM 안에 보관)
-> 디스크 여유가 ~181GB라 백업을 **VM 밖으로 옮길 필요 없이 VM 안**에 둔다.
-> 되돌릴 일이 생기면 여기서 복원한다.
+---
+
+## 3. Docker 설치 (VM에 1회)
 
 ```bash
 ssh oracle_vm
-sudo mkdir -p /var/backups/pre-kaspflow && sudo chown "$USER" /var/backups/pre-kaspflow
-
-# 1) Neo4j 덤프 (서비스 잠깐 멈춘 상태에서가 안전)
-sudo systemctl stop neo4j
-sudo neo4j-admin database dump neo4j \
-  --to-path=/var/backups/pre-kaspflow 2>/dev/null \
-  || sudo neo4j-admin dump --database=neo4j \
-       --to=/var/backups/pre-kaspflow/neo4j.dump   # (버전에 따라 명령 형태 다름)
-
-# 2) midas Postgres 스냅샷 (공유 인스턴스 건드리기 전 안전장치)
-sudo -u postgres pg_dumpall > /var/backups/pre-kaspflow/pg_all_$(date +%F).sql
-# 또는 midas DB만: sudo -u postgres pg_dump <midas_db> > /var/backups/pre-kaspflow/midas_$(date +%F).sql
-
-ls -lh /var/backups/pre-kaspflow    # 백업 파일/크기 확인
+# 공식 편의 스크립트 (Ubuntu 22.04 지원)
+curl -fsSL https://get.docker.com | sudo sh
+# ubuntu 사용자가 sudo 없이 docker 쓰게
+sudo usermod -aG docker $USER
+newgrp docker    # 또는 재로그인
+docker --version && docker compose version
 ```
-
-### 백업 확인 후 Neo4j 내리기
-- 백업 파일이 생겼는지 확인한 다음에만 내린다: `sudo systemctl disable --now neo4j`
-- 메모리 회수 확인: `free -h`
-- 호스트 Postgres 버전/포트 확인: `ssh oracle_vm 'psql -V; sudo ss -ltnp | grep 5432'`
-
-> 복원이 필요하면(되돌리기):
-> `sudo systemctl enable --now neo4j` 후 `neo4j-admin database load neo4j --from-path=/var/backups/pre-kaspflow`,
-> Postgres는 `psql -f /var/backups/pre-kaspflow/pg_all_*.sql`.
-
----
-
-## 3. Podman 사용법 (Docker와 명령어/방식 차이 — 전부 가능)
-
-> 아래는 "Podman으로 안 된다"가 아니라, Docker와 **명령어가 다를 뿐** 동일하게 된다는 정리다.
-
-1. **compose 실행**: `docker compose` → `podman compose` (또는 `podman-compose`).
-   우리 compose 파일은 그대로 호환된다. 실행 커맨드만 다르다. 먼저 지원 여부 확인:
-   `ssh oracle_vm 'podman compose version || podman-compose --version'`
-2. **GHCR pull**: 이미지가 private이면 로그인 필요.
-   `echo <GHCR_PAT> | podman login ghcr.io -u <github-user> --password-stdin`
-   (또는 GHCR에서 kaspflow 패키지들을 public으로 전환)
-3. **자동 재시작**: Podman은 데몬이 없어 `restart: unless-stopped` 가 Docker처럼
-   안 먹는다. 재부팅/크래시 복구는 **`podman generate systemd`** 또는 **Quadlet(.container)**
-   로 systemd 유닛을 만들어야 한다. ← midas의 systemd 패턴과 동일 철학.
+- Docker의 `restart: unless-stopped` 정책이 재부팅/크래시 복구를 맡는다(별도 systemd 유닛 불필요).
+- 자동배포 타이머만 systemd로 둔다(§5).
 
 ---
 
@@ -94,22 +75,24 @@ kaspflow는 postgres 컨테이너를 **제거**하고 호스트 Postgres에 붙�
 1. **DB 생성 + 스키마 적용** (호스트에서 1회):
    ```bash
    ssh oracle_vm
+   sudo systemctl enable --now postgresql@17-main   # 부팅 시 자동 시작 + 지금 시작
    sudo -u postgres psql -c "CREATE DATABASE crypto;"
    sudo -u postgres psql -c "CREATE USER crypto WITH PASSWORD '<강한암호>';"
    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE crypto TO crypto;"
-   # init.sql 적용 (repo clone 후)
+   # PG16+ 는 public 스키마 권한도 명시 필요할 수 있음
+   sudo -u postgres psql -d crypto -c "GRANT ALL ON SCHEMA public TO crypto;"
+   # init.sql 적용 (repo clone 후, repo 루트에서)
    sudo -u postgres psql -d crypto -f db/init.sql
    ```
 2. **컨테이너 → 호스트 Postgres 접속 주소**:
-   - Podman: `host.containers.internal:5432` 사용 (compose 서비스명 `postgres`는 못 씀)
-   - 또는 해당 서비스만 `--network=host` 로.
-   - spark/backend 의 `POSTGRES_HOST` 를 `host.containers.internal` 로 세팅.
+   - Docker: `host.docker.internal:5432` 사용 (compose에 `extra_hosts: ["host.docker.internal:host-gateway"]` 필요)
+   - spark/backend/producer 의 `POSTGRES_HOST` 를 `host.docker.internal` 로 세팅.
 3. **호스트 Postgres가 컨테이너 접속을 허용**해야 함:
-   - `postgresql.conf`: `listen_addresses` 에 podman 브리지 대역 포함(또는 `*`, 방화벽으로 보호)
-   - `pg_hba.conf`: podman 네트워크 대역(예: `10.88.0.0/16`)에서 `crypto` DB md5 허용
-   - 반영: `sudo systemctl reload postgresql`
-4. **주의**: midas와 **같은 인스턴스**다. `crypto` DB/유저 권한을 midas DB와 분리하고,
-   비밀번호는 `.env`로만 관리(커밋 금지).
+   - `postgresql.conf`: `listen_addresses = '*'` (또는 docker 브리지 IP) — 방화벽으로 보호
+   - `pg_hba.conf`: docker 기본 브리지 대역(`172.16.0.0/12`)에서 `crypto` DB `scram-sha-256`/`md5` 허용
+   - 반영: `sudo systemctl reload postgresql@17-main`
+4. **주의**: 기존 PG17과 **같은 인스턴스**다. `crypto` DB/유저를 분리하고,
+   비밀번호는 VM의 `.env`로만 관리(레포에 커밋 금지).
 
 ---
 
@@ -120,17 +103,15 @@ midas-touch는 **VM이 2분마다 main을 polling** 해서 스스로 배포한�
 Actions에서 SSH push가 아니라 **pull**인 이유: VM에 DB가 같이 돌아서
 셸 열리는 키를 레포 시크릿에 두기 부담스럽기 때문. kaspflow도 같은 VM/상황이라 동일 논리 적용.
 
-### kaspflow용으로 이식할 것 (다음 세션 작업 목록)
-- [ ] `docker-compose.prod.yml` 작성:
+### kaspflow용으로 이식할 것 (이 세션에서 작성함)
+- [x] `docker-compose.prod.yml`:
       - postgres 서비스 **제거**(호스트 공유), 나머지는 `image: ghcr.io/<owner>/<repo>-<svc>:latest`
-      - spark 에 메모리 상한: `SPARK_DRIVER_MEMORY=1g` 등 + (podman) `mem_limit`
-      - `POSTGRES_HOST=host.containers.internal`
-- [ ] `infra/kaspflow-autodeploy.sh` (midas 스크립트 참고: git pull --ff-only →
-      `podman compose pull` → `up -d` → 헬스체크 → 실패 시 롤백)
-- [ ] `infra/kaspflow-autodeploy.{service,timer}` (2분 폴링) 또는 Quadlet
-- [ ] CI 게이트: publish-images 성공 커밋만 배포되게(선택)
-- [ ] 방화벽: 대시보드 포트(8501) VCN Security List + OS 방화벽 양쪽 open
-      (midas 런북 교훈: 오라클은 콘솔 VCN + VM 방화벽 둘 다 열어야 한다)
+      - spark 에 메모리 상한(`mem_limit` + `SPARK_DRIVER_MEMORY`)
+      - `POSTGRES_HOST=host.docker.internal` + `extra_hosts: host-gateway`
+- [x] `infra/kaspflow-autodeploy.sh` (midas 스크립트 각색: git fetch/pull --ff-only →
+      CI 게이트 → `docker compose -f docker-compose.prod.yml pull` → `up -d` → 헬스체크 → 실패 시 롤백)
+- [x] `infra/kaspflow-autodeploy.{service,timer}` (2분 폴링)
+- [ ] (Jacob) 방화벽: 대시보드 포트(8501) VCN Security List + iptables 양쪽 open
 
 ---
 
