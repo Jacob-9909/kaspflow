@@ -45,19 +45,24 @@ REMOTE="$(git rev-parse "origin/$BRANCH")"
 log "새 커밋 감지: ${LOCAL:0:7} → ${REMOTE:0:7}"
 
 # ── 1) CI 게이트 (GH_REPO 설정 시에만) ──────────────────────────
-# publish-images 워크플로가 성공한 커밋만 배포한다. 아직 도는 중이면 다음 틱에 재확인.
+# publish-images 의 build-and-push 잡들이 전부 성공한 커밋만 배포한다.
+# check-run 이름은 워크플로명이 아니라 잡 이름("build-and-push (spark, ./spark)" 등).
 if [ -n "$GH_REPO" ] && command -v jq >/dev/null 2>&1; then
   API="https://api.github.com/repos/$GH_REPO"
   CHECKS="$(curl -s -m 20 -H 'Accept: application/vnd.github+json' "$API/commits/$REMOTE/check-runs")"
-  # "Publish Images" 잡의 상태를 본다. 없으면 보류(아직 트리거 전일 수 있음).
-  GATE="$(printf '%s' "$CHECKS" \
-    | jq -r '.check_runs[]? | select(.name | test("[Pp]ublish")) | "\(.status):\(.conclusion)"' 2>/dev/null | head -1)"
-  case "$GATE" in
-    completed:success) ;;                                  # 통과 — 계속
-    "")                log "⏳ publish-images 체크 없음 — 보류"; exit 0 ;;
-    completed:*)       log "❌ publish-images ${GATE#completed:} — ${REMOTE:0:7} 배포 안 함"; exit 0 ;;
-    *)                 log "⏳ publish-images 진행 중($GATE) — 보류"; exit 0 ;;
-  esac
+  # build-and-push 잡들만 추린다 (이미지 빌드/푸시 담당).
+  BUILD_CHECKS="$(printf '%s' "$CHECKS" \
+    | jq -r '.check_runs[]? | select(.name | startswith("build-and-push")) | "\(.status):\(.conclusion)"' 2>/dev/null)"
+  if [ -z "$BUILD_CHECKS" ]; then
+    log "⏳ build-and-push 체크 아직 없음 — 보류"; exit 0
+  fi
+  # 하나라도 완료 안 됐으면 보류, 완료됐는데 success 아닌 게 있으면 거부.
+  if printf '%s\n' "$BUILD_CHECKS" | grep -qv '^completed:'; then
+    log "⏳ 이미지 빌드 진행 중 — 보류"; exit 0
+  fi
+  if printf '%s\n' "$BUILD_CHECKS" | grep -qv '^completed:success$'; then
+    log "❌ 이미지 빌드 실패한 잡 있음 — ${REMOTE:0:7} 배포 안 함"; exit 0
+  fi
 fi
 
 # ── 2) 코드 갱신 ────────────────────────────────────────────────
