@@ -1,6 +1,6 @@
 # 실시간 암호화폐 시세 대시보드
 
-거래소(Upbit) WebSocket 체결 스트림을 **Kafka → Spark Structured Streaming → PostgreSQL → FastAPI → Streamlit** 으로 흘려보내는 엔드투엔드 실시간 데이터 파이프라인 학습 프로젝트입니다.
+거래소(Binance) WebSocket 체결 스트림을 **Kafka → Spark Structured Streaming → PostgreSQL → FastAPI → Streamlit** 으로 흘려보내는 엔드투엔드 실시간 데이터 파이프라인 학습 프로젝트입니다.
 
 설계 배경과 의사결정은 상위 폴더의 `crypto-realtime-dashboard-DESIGN.md` 를 참고하세요.
 
@@ -28,7 +28,7 @@
 
 ```
 거래소 WS ──> Producer ──> Kafka ──> Spark Streaming ──> PostgreSQL ──> FastAPI ──> Streamlit
- (Upbit)     (produce)  (crypto-   (1분봉 OHLC 집계)     (저장)        (조회 API)   (차트)
+ (Binance)   (produce)  (crypto-   (1분봉 OHLC 집계)     (저장)        (조회 API)   (차트)
                          trades)
                             │
                             └─(모니터링)─> Kafka UI
@@ -97,7 +97,7 @@ docker compose down -v      # 볼륨까지 삭제 (DB 초기화 — 스키마 �
 | 메시지 수집 | Kafka UI → `crypto-trades` | 메시지 개수가 증가 |
 | Spark 집계 | `docker compose logs -f spark` | `[batch N] ... rows upsert 완료` |
 | DB 적재 | `docker compose exec postgres psql -U crypto -c "SELECT count(*) FROM ohlc_1m;"` | 행 수 증가 |
-| API | http://localhost:8000/ohlc?symbol=KRW-BTC | JSON 캔들 배열 |
+| API | http://localhost:8000/ohlc?symbol=BTCUSDT | JSON 캔들 배열 |
 | 대시보드 | http://localhost:8501 | 캔들차트 표시 |
 
 ---
@@ -146,7 +146,7 @@ crypto-realtime-dashboard/
 - **Spark가 Kafka에 못 붙어요**: 컨테이너 내부에서는 `kafka:9092`(INTERNAL), 호스트에서는 `localhost:19092`(EXTERNAL)를 써야 합니다. 버전은 Spark 3.5 ↔ `spark-sql-kafka-0-10_2.12:3.5.1` 로 맞춰져 있습니다.
 - **대시보드에 "데이터 없음"**: Producer→Kafka→Spark→DB 까지 최소 1~2분 걸립니다. `docker compose logs -f spark` 로 upsert 로그를 먼저 확인하세요.
 - **스키마를 바꿨는데 반영이 안 돼요**: `init.sql` 은 DB **최초 생성 시 1회만** 실행됩니다. `docker compose down -v` 로 볼륨을 지운 뒤 다시 올리세요.
-- **거래소 연결 오류**: Upbit 공개 스트림은 개인 학습용 범위에서 사용하세요. 연결이 끊겨도 Producer가 자동 재연결합니다.
+- **거래소 연결 오류**: Binance 시장 데이터 스트림은 무료/무인증이지만 단일 연결이 24시간 후 끊깁니다. 연결이 끊겨도 Producer가 자동 재연결합니다. 일부 지역에서 `stream.binance.com` 접속이 막히면 `producer/main.py` 의 `BINANCE_WS_BASE` 를 `wss://data-stream.binance.vision/stream` (기본값) 그대로 두거나 대체 엔드포인트로 바꿔보세요.
 
 ---
 

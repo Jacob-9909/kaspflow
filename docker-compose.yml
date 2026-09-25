@@ -110,7 +110,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       KAFKA_TOPIC: ${KAFKA_TOPIC:-crypto-trades}
-      SYMBOLS: ${SYMBOLS:-KRW-BTC,KRW-ETH,KRW-XRP}
+      SYMBOLS: ${SYMBOLS:-BTCUSDT,ETHUSDT,XRPUSDT}
     restart: unless-stopped   # WebSocket이 죽어도 컨테이너 재시작
 
   # ----------------------------------------------------------

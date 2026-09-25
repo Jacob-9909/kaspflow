@@ -81,7 +81,7 @@ def list_symbols():
 
 @app.get("/ohlc")
 def get_ohlc(
-    symbol: str = Query(..., description="심볼 (예: KRW-BTC)"),
+    symbol: str = Query(..., description="심볼 (예: BTCUSDT)"),
     limit: int = Query(60, ge=1, le=1000, description="최근 몇 개의 1분봉을 가져올지"),
 ):
     """특정 심볼의 최근 1분봉을 시간 오름차순으로 반환.

@@ -13,7 +13,7 @@
 --   Spark 잡이 (symbol, window_start) 기준으로 upsert 한다.
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS ohlc_1m (
-    symbol        TEXT             NOT NULL,           -- 심볼 (예: KRW-BTC)
+    symbol        TEXT             NOT NULL,           -- 심볼 (예: BTCUSDT)
     window_start  TIMESTAMPTZ      NOT NULL,           -- 1분 윈도우 시작 시각
     open          DOUBLE PRECISION,                    -- 시가
     high          DOUBLE PRECISION,                    -- 고가
