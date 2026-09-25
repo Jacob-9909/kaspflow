@@ -11,7 +11,7 @@
  *   App() 안의 useEffect 2개 -> return JSX (헤더 / 심볼선택 / 지표카드 / 차트)
  */
 import { useEffect, useState } from "react";
-import { fetchSymbols, fetchOhlc, type Candle } from "./api";
+import { fetchSymbols, fetchOhlc, fetchIntervals, type Candle } from "./api";
 import { CandleChart } from "./components/CandleChart";
 import { SymbolSelector } from "./components/SymbolSelector";
 
@@ -34,10 +34,12 @@ function MetricCard({ label, value }: { label: string; value: string }) {
 export default function App() {
   const [symbols, setSymbols] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [intervals, setIntervals] = useState<string[]>(["1m"]);
+  const [interval, setInterval_] = useState<string>("1m");
   const [candles, setCandles] = useState<Candle[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // 1) 마운트 시 1회: 심볼 목록 로드 + 첫 심볼 자동 선택
+  // 1) 마운트 시 1회: 심볼 목록 + 인터벌 목록 로드 + 첫 심볼 자동 선택
   useEffect(() => {
     fetchSymbols()
       .then((list) => {
@@ -45,16 +47,23 @@ export default function App() {
         if (list.length > 0) setSelected((prev) => prev ?? list[0]);
       })
       .catch((e) => setError(String(e)));
+    fetchIntervals()
+      .then((list) => {
+        if (list.length > 0) setIntervals(list);
+      })
+      .catch(() => {
+        /* 실패해도 기본 ["1m"] 유지 */
+      });
   }, []);
 
-  // 2) 선택 심볼이 바뀌거나, 5초마다: 1분봉 다시 로드
+  // 2) 선택 심볼/인터벌이 바뀌거나, 5초마다: 봉 다시 로드
   useEffect(() => {
     if (!selected) return;
 
     let cancelled = false; // 언마운트 후 setState 방지 플래그
 
     const load = () => {
-      fetchOhlc(selected)
+      fetchOhlc(selected, interval)
         .then((data) => {
           if (!cancelled) {
             setCandles(data);
@@ -67,14 +76,15 @@ export default function App() {
     };
 
     load(); // 즉시 1회
-    const timer = setInterval(load, REFRESH_MS); // 이후 주기적으로
+    // window.setInterval: 위 상태변수 interval 과 이름이 겹쳐 window. 으로 명시
+    const timer = window.setInterval(load, REFRESH_MS);
 
-    // 심볼이 바뀌거나 언마운트되면 타이머 정리
+    // 심볼/인터벌이 바뀌거나 언마운트되면 타이머 정리
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [selected]);
+  }, [selected, interval]);
 
   // 최신 캔들(요약 지표용)
   const latest = candles.length > 0 ? candles[candles.length - 1] : null;
@@ -89,6 +99,19 @@ export default function App() {
       </header>
 
       <SymbolSelector symbols={symbols} selected={selected} onSelect={setSelected} />
+
+      {/* 인터벌(봉 간격) 선택 — 심볼 선택과 같은 칩 스타일 */}
+      <div className="symbol-selector">
+        {intervals.map((iv) => (
+          <button
+            key={iv}
+            className={iv === interval ? "chip chip--active" : "chip"}
+            onClick={() => setInterval_(iv)}
+          >
+            {iv}
+          </button>
+        ))}
+      </div>
 
       {error && <p className="error">데이터를 불러오지 못했습니다: {error}</p>}
 

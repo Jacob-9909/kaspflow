@@ -53,9 +53,24 @@ export async function fetchSymbols(): Promise<string[]> {
   return data.symbols;
 }
 
-/** 특정 심볼의 최근 1분봉을 시간 오름차순으로 가져온다. */
-export async function fetchOhlc(symbol: string, limit = 120): Promise<Candle[]> {
-  const params = new URLSearchParams({ symbol, limit: String(limit) });
+/** 특정 심볼의 최근 봉을 시간 오름차순으로 가져온다. interval 기본 1m. */
+export async function fetchOhlc(
+  symbol: string,
+  interval = "1m",
+  limit = 120,
+): Promise<Candle[]> {
+  const params = new URLSearchParams({ symbol, interval, limit: String(limit) });
   const data = await getJson<OhlcResponse>(`/api/ohlc?${params.toString()}`);
   return data.candles;
+}
+
+/** 지원하는 봉 간격 목록 (예: ["1m","5m","15m","1h","4h","1d"]). */
+export async function fetchIntervals(): Promise<string[]> {
+  try {
+    const data = await getJson<{ intervals: string[] }>("/api/intervals");
+    return data.intervals;
+  } catch {
+    // 백엔드가 구버전이면 최소한 1m 은 되도록 폴백
+    return ["1m"];
+  }
 }
