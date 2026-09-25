@@ -18,7 +18,9 @@ Host oracle_vm db
 ```
 
 - 사양: **2 OCPU / 12GB RAM**, Ubuntu 22.04, 디스크 여유 넉넉(~181GB)
-- 컨테이너 런타임: **Podman** (Docker 아님 — 아래 주의점 참고)
+- 컨테이너 런타임: **Podman 확정.** Docker로 전환하지 않는다.
+  우리 GHCR 이미지와 compose 파일은 Podman에서 그대로 쓸 수 있다.
+  (아래 §3은 "안 되는 제약"이 아니라 Docker와의 **명령어/방식 차이** 가이드다.)
 - 기존 운영: midas-touch (백엔드 uv+systemd, Postgres/Neo4j 호스트 systemd)
 
 ---
@@ -35,15 +37,46 @@ Host oracle_vm db
 ```bash
 ssh oracle_vm 'podman --version; free -h; systemctl is-active postgresql neo4j'
 ```
-- Neo4j가 active면 내린다: `sudo systemctl disable --now neo4j` (메모리 회수 확인: free -h)
+
+### Neo4j 내리기 전 — 데이터 백업 (VM 안에 보관)
+> 디스크 여유가 ~181GB라 백업을 **VM 밖으로 옮길 필요 없이 VM 안**에 둔다.
+> 되돌릴 일이 생기면 여기서 복원한다.
+
+```bash
+ssh oracle_vm
+sudo mkdir -p /var/backups/pre-kaspflow && sudo chown "$USER" /var/backups/pre-kaspflow
+
+# 1) Neo4j 덤프 (서비스 잠깐 멈춘 상태에서가 안전)
+sudo systemctl stop neo4j
+sudo neo4j-admin database dump neo4j \
+  --to-path=/var/backups/pre-kaspflow 2>/dev/null \
+  || sudo neo4j-admin dump --database=neo4j \
+       --to=/var/backups/pre-kaspflow/neo4j.dump   # (버전에 따라 명령 형태 다름)
+
+# 2) midas Postgres 스냅샷 (공유 인스턴스 건드리기 전 안전장치)
+sudo -u postgres pg_dumpall > /var/backups/pre-kaspflow/pg_all_$(date +%F).sql
+# 또는 midas DB만: sudo -u postgres pg_dump <midas_db> > /var/backups/pre-kaspflow/midas_$(date +%F).sql
+
+ls -lh /var/backups/pre-kaspflow    # 백업 파일/크기 확인
+```
+
+### 백업 확인 후 Neo4j 내리기
+- 백업 파일이 생겼는지 확인한 다음에만 내린다: `sudo systemctl disable --now neo4j`
+- 메모리 회수 확인: `free -h`
 - 호스트 Postgres 버전/포트 확인: `ssh oracle_vm 'psql -V; sudo ss -ltnp | grep 5432'`
+
+> 복원이 필요하면(되돌리기):
+> `sudo systemctl enable --now neo4j` 후 `neo4j-admin database load neo4j --from-path=/var/backups/pre-kaspflow`,
+> Postgres는 `psql -f /var/backups/pre-kaspflow/pg_all_*.sql`.
 
 ---
 
-## 3. Podman 주의점 (Docker와 다른 부분)
+## 3. Podman 사용법 (Docker와 명령어/방식 차이 — 전부 가능)
+
+> 아래는 "Podman으로 안 된다"가 아니라, Docker와 **명령어가 다를 뿐** 동일하게 된다는 정리다.
 
 1. **compose 실행**: `docker compose` → `podman compose` (또는 `podman-compose`).
-   우리 compose 파일은 대체로 호환되나 실행 커맨드가 다르다. 먼저 지원 여부 확인:
+   우리 compose 파일은 그대로 호환된다. 실행 커맨드만 다르다. 먼저 지원 여부 확인:
    `ssh oracle_vm 'podman compose version || podman-compose --version'`
 2. **GHCR pull**: 이미지가 private이면 로그인 필요.
    `echo <GHCR_PAT> | podman login ghcr.io -u <github-user> --password-stdin`
