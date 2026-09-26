@@ -34,13 +34,21 @@
                             └─(모니터링)─> Kafka UI
 ```
 
-| 서비스 | 포트 (호스트) | 접속 |
+아래 접속 주소는 **로컬 개발**(`docker compose up`) 기준입니다. 프론트엔드 코드는 URL을 하드코딩하지 않고 상대경로(`/api`)로 호출하므로, 어디에 배포하든 "접속한 그 주소"를 그대로 씁니다.
+
+| 서비스 | 포트 (호스트) | 로컬 접속 |
 | --- | --- | --- |
 | Kafka UI | 8080 | http://localhost:8080 |
 | Backend API (문서) | 8000 | http://localhost:8000/docs |
 | Dashboard | 8501 | http://localhost:8501 |
 | Kafka (외부 접속용) | 19092 | `localhost:19092` |
 | PostgreSQL | 5432 | `localhost:5432` (user/pw/db = crypto) |
+
+### 🌐 프로덕션 (Oracle VM 배포)
+- **대시보드/API**: https://bit-kaspflow.duckdns.org  (Caddy가 자동 HTTPS 종단, `/api/*` → backend)
+  - Caddy 리버스 프록시 설정은 `infra/Caddyfile` 참고. 한 도메인에서 프론트(`/`)와 API(`/api`)를 함께 서빙하므로 CORS/mixed-content 문제가 없습니다.
+  - 도메인은 DuckDNS(무료 DDNS) + VM cron(5분 주기 IP 갱신)로 유지됩니다.
+- 컨테이너가 직접 노출하는 포트(8501/8090 등)로도 접근 가능하지만, 상시 접속은 위 HTTPS 주소를 쓰세요.
 
 ---
 
@@ -197,6 +205,7 @@ ghcr.io/<owner>/<repo>-spark:latest
 - `.env.prod.example` — 프로덕션 `.env` 템플릿 (이미지 태그·DB 접속정보)
 - `infra/vm-setup.md` — **최초 1회 셋업 런북** (Docker 설치 → PG `crypto` DB → 방화벽 → 배포)
 - `infra/kaspflow-autodeploy.{sh,service,timer}` — main 폴링 자동배포 (2분 주기, CI 게이트 + 헬스체크 + 롤백)
+- `infra/Caddyfile` — 리버스 프록시 + 자동 HTTPS(Let's Encrypt). 한 도메인(`bit-kaspflow.duckdns.org`)에서 프론트(`/`)와 API(`/api`)를 함께 서빙 → 코드 수정·CORS 없이 HTTPS 접속
 
 배포 방식은 **VM이 main을 폴링**하는 pull 방식입니다 (SSH 키를 레포 시크릿에 두지 않아 안전 — midas 패턴 재사용).
 

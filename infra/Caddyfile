@@ -1,0 +1,44 @@
+# kaspflow 리버스 프록시 — Let's Encrypt 자동 HTTPS
+# ============================================================
+# 한 도메인(bit-kaspflow.duckdns.org)에서 프론트(대시보드)와 API를 함께 서빙한다.
+# 프론트 코드(api.ts)가 상대경로 /api 로 호출하므로, 프론트와 API가 같은 출처(origin)면
+# 코드 수정 없이 그대로 동작한다. (Vercel 처럼 출처가 갈리면 CORS/mixed-content 문제가 생김)
+#
+#   브라우저 ──HTTPS──> bit-kaspflow.duckdns.org (Caddy :443)
+#                         ├─ /api/*  ─> 127.0.0.1:8000  (backend, /api 접두사 제거)
+#                         └─ /*      ─> 127.0.0.1:8501  (dashboard nginx = 정적 React)
+#
+# 설치 (VM):
+#   sudo cp infra/Caddyfile /etc/caddy/Caddyfile        # 또는 import 로 병합(아래 주석 참고)
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl enable --now caddy
+#   sudo systemctl reload caddy
+#
+# 사전 조건:
+#   - bit-kaspflow.duckdns.org A 레코드 → 161.33.134.252 (완료)
+#   - 80·443 이 외부에서 열려 있어야 함 (OCI VCN Security List + iptables 양쪽).
+#     80 은 Let's Encrypt HTTP-01 챌린지용 — 닫으면 인증서 발급 실패.
+#
+# 도메인이 바뀌면 아래 사이트 주소 한 줄만 고치면 된다.
+# ------------------------------------------------------------
+# (참고) 이 VM 에는 midas 용 Caddyfile 이 이미 있을 수 있다. 둘 다 살리려면 이 파일을
+# 통째로 복사하지 말고, 기존 /etc/caddy/Caddyfile 하단에 아래 사이트 블록만 붙여넣거나
+# import 로 병합한다. Caddy 는 한 프로세스가 여러 도메인을 동시에 서빙할 수 있다.
+
+bit-kaspflow.duckdns.org {
+	# /api/* 는 backend(FastAPI 8000)로. nginx.conf 와 동일하게 /api 접두사를 떼고 전달한다:
+	#   /api/ohlc -> http://127.0.0.1:8000/ohlc
+	handle_path /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# 그 외 전부는 대시보드(정적 React, nginx 컨테이너 8501)로.
+	handle {
+		reverse_proxy 127.0.0.1:8501
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
