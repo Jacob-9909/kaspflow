@@ -102,6 +102,8 @@ export interface BacktestConfig {
   stopLossPct: number | null;
   takeProfitPct: number | null;
   trailingStopPct: number | null;
+  buyPct: number; // 매수 신호 때 투입할 현금 비율 (0 초과 ~ 1, 1 = 전액)
+  sellTranches: number; // 매도 신호 때 나눠 팔 횟수 (1 = 한 번에)
   params: Record<string, number>;
 }
 
@@ -112,6 +114,9 @@ export interface BacktestMarker {
   price: number;
   reason: string; // signal | stop_loss | take_profit | trailing_stop
   pnl_pct: number | null; // 매도 시 손익(수수료 반영), 매수는 null
+  leg: number | null; // 분할 매도의 몇 번째 매도인지 (1부터). 매수는 null
+  legs_total: number | null; // 신호 매도일 때 계획된 분할 횟수
+  final: boolean; // 이 매도로 포지션이 전량 청산됐는지
 }
 
 export interface BacktestTrade {
@@ -124,6 +129,7 @@ export interface BacktestTrade {
   pnl_amount: number;
   exit_reason: string;
   bars_held: number;
+  legs: number; // 분할 매도 횟수 (1 = 한 번에)
 }
 
 export interface BacktestMetrics {
@@ -157,6 +163,7 @@ export interface BacktestResult {
     entry_price: number;
     qty: number;
     unrealized_pct: number;
+    sold_legs: number; // 이미 분할 매도한 횟수
   } | null;
   warnings: string[];
 }
@@ -164,6 +171,7 @@ export interface BacktestResult {
 interface StrategiesResponse {
   strategies: StrategyInfo[];
   risk_defaults: { fee_bps: number };
+  sizing_defaults?: { buy_pct: number; sell_tranches: number };
 }
 
 /** 전략 목록 + 기본 리스크 설정. 구버전 백엔드(미지원)면 null -> 패널을 숨긴다. */
@@ -188,6 +196,8 @@ export async function fetchBacktest(
     limit: String(cfg.limit),
     initial_capital: String(cfg.initialCapital),
     fee_bps: String(cfg.feeBps),
+    buy_pct: String(cfg.buyPct),
+    sell_tranches: String(cfg.sellTranches),
   });
   if (cfg.stopLossPct !== null) q.set("stop_loss_pct", String(cfg.stopLossPct));
   if (cfg.takeProfitPct !== null) q.set("take_profit_pct", String(cfg.takeProfitPct));

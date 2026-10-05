@@ -17,7 +17,8 @@
 
 [체결 모델 (midas 와 동일)]
   신호가 확정된 봉의 종가로 즉시 체결한다. 실제로는 슬리피지/다음 봉 시가 체결이
-  있으므로 결과는 다소 낙관적이다. 매수는 전액 투입(all-in), 포지션은 최대 1개(롱 온리).
+  있으므로 결과는 다소 낙관적이다. 포지션은 최대 1개(롱 온리, 추가 매수 없음).
+  기본은 전액 매수 후 한 번에 전량 매도이고, 부분 매수(buy_pct)와 분할 매도(sell_tranches)를 지정할 수 있다.
 
 [순수 함수]
   DB/네트워크에 의존하지 않는다. (그래서 단위 테스트가 쉽다)
@@ -67,7 +68,14 @@ DEFAULT_RISK: dict[str, float | None] = {
 
 MAX_FEE_BPS = 100.0
 MAX_CAPITAL = 1e12
+MAX_TRANCHES = 10
 MINUTES_PER_YEAR = 365 * 24 * 60
+
+# 포지션 크기: 기본값(전액 매수 / 한 번에 매도)이면 midas-touch 와 체결이 동일하다.
+DEFAULT_SIZING: dict[str, float] = {
+    "buy_pct": 1.0,       # 매수 신호 때 투입할 현금 비율 (0 초과 ~ 1)
+    "sell_tranches": 1,   # 매도 신호 때 몇 번에 나눠 팔지 (1 ~ MAX_TRANCHES)
+}
 
 
 # ------------------------------------------------------------
@@ -114,6 +122,25 @@ def merge_risk(overrides: dict[str, Any] | None) -> dict[str, float | None]:
     if risk["fee_bps"] is None:
         risk["fee_bps"] = 0.0
     return risk
+
+
+def merge_sizing(overrides: dict[str, Any] | None) -> dict[str, float]:
+    """포지션 크기 설정을 기본값과 합치고 범위를 검증한다."""
+    sizing = dict(DEFAULT_SIZING)
+    for key, value in (overrides or {}).items():
+        if key not in sizing:
+            raise ValueError(f"알 수 없는 포지션 설정: {key}")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"{key} 는 유한한 숫자여야 합니다")
+        if key == "buy_pct":
+            if not 0 < value <= 1:
+                raise ValueError("buy_pct 는 0 초과 1 이하 비율이어야 합니다 (예: 0.5 = 현금의 50%)")
+            sizing[key] = float(value)
+        else:  # sell_tranches
+            if int(value) != value or not 1 <= value <= MAX_TRANCHES:
+                raise ValueError(f"sell_tranches 는 1~{MAX_TRANCHES} 사이 정수여야 합니다")
+            sizing[key] = int(value)
+    return sizing
 
 
 def required_bars(strategy: str, params: dict[str, float]) -> int:
@@ -235,76 +262,128 @@ def simulate(
     times: list[int],
     capital: float,
     risk: dict[str, float | None],
+    sizing: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """신호 + 리스크·비용으로 체결을 시뮬레이션한다.
+    """신호 + 리스크·비용 + 포지션 크기로 체결을 시뮬레이션한다.
 
-    리스크 청산(손절/익절/추격손절)은 신호 청산보다 우선한다. 리스크로 청산된 뒤에는
-    스탠스가 새로 +1 로 바뀔 때까지 재진입하지 않는다(즉시 재매수 방지).
+    [포지션 크기]
+      buy_pct       : 매수 신호 때 '현금의' 이 비율만 투입한다 (1.0 = 전액, 0.5 = 절반).
+      sell_tranches : 매도 신호 때 보유분을 N 등분해 연속한 N 개 봉에서 나눠 판다 (1 = 한 번에).
+                      - 손절/익절/추격손절(리스크 청산)은 지연 없이 남은 전량을 즉시 정리한다.
+                      - 분할 매도 도중 스탠스가 매수(+1)로 돌아오면 남은 분량은 팔지 않고 보유한다.
+
+    리스크 청산은 신호 청산보다 우선한다. 리스크로 청산된 뒤에는 스탠스가 새로 +1 로
+    바뀔 때까지 재진입하지 않는다(즉시 재매수 방지). 포지션은 최대 1개(추가 매수 없음).
+    한 '거래'는 매수 1회부터 전량 청산까지이며, 분할 매도의 각 매도는 마커(leg)로 남는다.
     """
     sl, tp, ts = risk.get("stop_loss_pct"), risk.get("take_profit_pct"), risk.get("trailing_stop_pct")
     fee = float(risk.get("fee_bps") or 0.0) / 10000.0
+    sizing = sizing or DEFAULT_SIZING
+    buy_pct = float(sizing.get("buy_pct", 1.0))
+    tranches = int(sizing.get("sell_tranches", 1))
 
     n = len(closes)
     cash = float(capital)
     qty = 0.0
     entry_px = peak_px = 0.0
     entry_i = 0
+    # 현재 포지션 누적 (전량 청산 시 거래 1건으로 묶는다)
+    qty_bought = cost_total = proceeds_total = sold_value = 0.0
+    legs = 0               # 이 거래의 전체 매도 횟수
+    seq_leg = 0            # 현재 '매도 신호 시퀀스' 안에서 몇 번째 매도인지 (마커 라벨용, 신호마다 1부터)
+    sell_left = 0          # 분할 매도에서 아직 남은 매도 횟수
+    tranche_qty = 0.0
 
     equity = np.zeros(n)
     in_market = np.zeros(n)
+    exposure = np.zeros(n)
     equity[0] = cash
     trades: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
 
     for i in range(1, n):
         px = float(closes[i])
-        exit_reason = None
+        sell_qty = 0.0
+        reason = None
 
         if qty > 0:
             peak_px = max(peak_px, px)
             ret = (px - entry_px) / entry_px if entry_px else 0.0
             draw = (px - peak_px) / peak_px if peak_px else 0.0
+            risk_reason = None
             if sl is not None and ret <= -sl:
-                exit_reason = "stop_loss"
+                risk_reason = "stop_loss"
             elif tp is not None and ret >= tp:
-                exit_reason = "take_profit"
+                risk_reason = "take_profit"
             elif ts is not None and draw <= -ts:
-                exit_reason = "trailing_stop"
-            elif positions[i] == -1 and positions[i - 1] >= 0:
-                exit_reason = "signal"
+                risk_reason = "trailing_stop"
 
-        if qty > 0 and exit_reason is not None:
-            net_entry = entry_px * (1 + fee)
-            net_exit = px * (1 - fee)
-            pnl_pct = (net_exit - net_entry) / net_entry if net_entry else 0.0
-            pnl_amount = qty * (net_exit - net_entry)
-            cash += qty * net_exit
-            trades.append({
-                "entry_time": times[entry_i],
-                "exit_time": times[i],
-                "entry_price": entry_px,
-                "exit_price": px,
-                "qty": qty,
-                "pnl_pct": pnl_pct,
-                "pnl_amount": pnl_amount,
-                "exit_reason": exit_reason,
-                "bars_held": i - entry_i,
-            })
-            events.append({"time": times[i], "side": "sell", "price": px,
-                           "reason": exit_reason, "pnl_pct": pnl_pct})
-            qty = 0.0
+            if risk_reason is not None:            # 리스크 청산: 남은 전량 즉시
+                sell_qty, reason, sell_left = qty, risk_reason, 0
+            elif sell_left > 0:                    # 분할 매도 진행 중
+                if positions[i] == 1:              # 매수 스탠스 복귀 -> 남은 분량 보유, 분할 매도 취소
+                    sell_left = 0
+                else:
+                    sell_qty = qty if sell_left == 1 else min(tranche_qty, qty)
+                    reason = "signal"
+                    sell_left -= 1
+                    seq_leg += 1
+            elif positions[i] == -1 and positions[i - 1] >= 0:   # 새 매도 신호
+                reason = "signal"
+                seq_leg = 1
+                if tranches > 1:
+                    tranche_qty = qty / tranches
+                    sell_qty, sell_left = tranche_qty, tranches - 1
+                else:
+                    sell_qty = qty
+
+        if sell_qty > 0:
+            net_px = px * (1 - fee)
+            proceeds = sell_qty * net_px
+            cash += proceeds
+            proceeds_total += proceeds
+            sold_value += sell_qty * px
+            legs += 1
+            qty -= sell_qty
+            if qty <= qty_bought * 1e-12:          # 부동소수 잔여 제거
+                qty = 0.0
+            leg_pnl = net_px / (entry_px * (1 + fee)) - 1
+            events.append({"time": times[i], "side": "sell", "price": px, "reason": reason,
+                           "pnl_pct": leg_pnl,
+                           "leg": seq_leg if reason == "signal" else None,
+                           "legs_total": tranches if reason == "signal" else None,
+                           "final": qty == 0.0})
+            if qty == 0.0:                         # 전량 청산 -> 거래 1건 기록
+                trades.append({
+                    "entry_time": times[entry_i],
+                    "exit_time": times[i],
+                    "entry_price": entry_px,
+                    "exit_price": sold_value / qty_bought,     # 분할 매도면 평균 청산가
+                    "qty": qty_bought,
+                    "pnl_pct": proceeds_total / cost_total - 1,
+                    "pnl_amount": proceeds_total - cost_total,
+                    "exit_reason": reason,
+                    "bars_held": i - entry_i,
+                    "legs": legs,
+                })
+                qty_bought = cost_total = proceeds_total = sold_value = 0.0
+                legs = sell_left = seq_leg = 0
         elif qty == 0 and positions[i] == 1 and positions[i - 1] <= 0 and cash > 0:
-            buy_qty = cash / (px * (1 + fee))
+            invest = cash * buy_pct
+            buy_qty = invest / (px * (1 + fee))
             if buy_qty > 0:
-                cash = max(cash - buy_qty * px * (1 + fee), 0.0)
-                qty = buy_qty
+                cost = buy_qty * px * (1 + fee)
+                cash = max(cash - cost, 0.0)
+                qty = qty_bought = buy_qty
+                cost_total = cost
                 entry_px = peak_px = px
                 entry_i = i
-                events.append({"time": times[i], "side": "buy", "price": px,
-                               "reason": "signal", "pnl_pct": None})
+                events.append({"time": times[i], "side": "buy", "price": px, "reason": "signal",
+                               "pnl_pct": None, "leg": None, "legs_total": None, "final": False})
 
         equity[i] = cash + qty * px
         in_market[i] = 1.0 if qty > 0 else 0.0
+        exposure[i] = (qty * px / equity[i]) if equity[i] > 0 else 0.0
 
     open_position = None
     if qty > 0:
@@ -314,8 +393,9 @@ def simulate(
             "entry_price": entry_px,
             "qty": qty,
             "unrealized_pct": (last * (1 - fee)) / (entry_px * (1 + fee)) - 1,
+            "sold_legs": legs,
         }
-    return {"equity": equity, "in_market": in_market, "trades": trades,
+    return {"equity": equity, "in_market": in_market, "exposure": exposure, "trades": trades,
             "events": events, "open_position": open_position}
 
 
@@ -369,7 +449,7 @@ def compute_metrics(
         "avg_win_pct": _num(sum(t["pnl_pct"] for t in wins) / len(wins)) if wins else 0.0,
         "avg_loss_pct": _num(sum(t["pnl_pct"] for t in losses) / len(losses)) if losses else 0.0,
         "sharpe_ratio": _num(min(max(sharpe, -99.0), 99.0), 4),
-        "exposure_pct": _num(float(np.mean(sim["in_market"][1:])), 4) if len(equity) > 1 else 0.0,
+        "exposure_pct": _num(float(np.mean(sim["exposure"][1:])), 4) if len(equity) > 1 else 0.0,
         "exit_reasons": exit_reasons,
     }
 
@@ -391,14 +471,17 @@ def run_backtest(
     risk: dict[str, Any] | None = None,
     interval_minutes: int = 1,
     drop_last_bar: bool = True,
+    sizing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """OHLC 봉 배열로 백테스트를 실행한다.
 
     candles: 시간 오름차순 [{window_start, open, high, low, close, volume}, ...]
     drop_last_bar: 집계 중일 수 있는 마지막 봉을 시뮬레이션에서 제외(리페인팅 방지).
+    sizing: {"buy_pct": 0.5, "sell_tranches": 3} — 부분 매수 / 분할 매도 (기본: 전액 / 한 번에)
     """
     merged_params = merge_params(strategy, params)
     merged_risk = merge_risk(risk)
+    merged_sizing = merge_sizing(sizing)
     if not (isinstance(initial_capital, (int, float)) and math.isfinite(initial_capital)
             and 0 < initial_capital <= MAX_CAPITAL):
         raise ValueError(f"initial_capital 은 0 초과 {MAX_CAPITAL:g} 이하여야 합니다")
@@ -420,7 +503,7 @@ def run_backtest(
 
     positions = compute_position(df, strategy, merged_params).to_numpy(dtype=float)
     closes = df["Close"].to_numpy(dtype=float)
-    sim = simulate(closes, positions, times, float(initial_capital), merged_risk)
+    sim = simulate(closes, positions, times, float(initial_capital), merged_risk, merged_sizing)
     metrics = compute_metrics(sim, closes, float(initial_capital), interval_minutes)
 
     warnings: list[str] = []
@@ -445,6 +528,7 @@ def run_backtest(
         "label": STRATEGY_LABELS[strategy],
         "params_used": merged_params,
         "risk_used": merged_risk,
+        "sizing_used": merged_sizing,
         "initial_capital": float(initial_capital),
         "interval_minutes": interval_minutes,
         "bars": len(rows),
@@ -459,6 +543,7 @@ def run_backtest(
         "open_position": None if open_pos is None else {
             "entry_time": open_pos["entry_time"], "entry_price": _num(open_pos["entry_price"], 8),
             "qty": _num(open_pos["qty"], 8), "unrealized_pct": _num(open_pos["unrealized_pct"]),
+            "sold_legs": open_pos["sold_legs"],
         },
         "warnings": warnings,
     }

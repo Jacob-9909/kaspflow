@@ -55,12 +55,16 @@ function toSeriesMarkers(markers: BacktestMarker[], candleTimes: Set<number>): S
       }
       const pct = m.pnl_pct === null ? "" : `${m.pnl_pct >= 0 ? "+" : ""}${(m.pnl_pct * 100).toFixed(2)}%`;
       const tag = REASON_TAG[m.reason];
+      // 분할 매도는 연속된 봉에 화살표가 붙어 라벨이 겹치므로, 라벨은 마지막(전량 청산) 매도에만 단다.
+      // 중간 매도는 화살표만 — 각 매도의 세부 내용은 거래 표에서 본다.
+      const split = m.reason === "signal" && m.legs_total && m.legs_total > 1 ? `${m.leg}/${m.legs_total}` : "";
+      const label = m.final || !split ? [tag ?? split, pct].filter(Boolean).join(" ") : "";
       return {
         time: m.time as UTCTimestamp,
         position: "aboveBar",
         shape: "arrowDown",
         color: "#ef5350",
-        text: tag ? `${tag} ${pct}` : pct, // 매도는 손익 % (리스크 청산이면 SL/TP/TS 꼬리표)
+        text: label,
       };
     });
 }

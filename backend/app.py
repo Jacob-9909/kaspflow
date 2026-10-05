@@ -222,6 +222,7 @@ def list_backtest_strategies():
             for sid, label in backtest.STRATEGY_LABELS.items()
         ],
         "risk_defaults": backtest.DEFAULT_RISK,
+        "sizing_defaults": backtest.DEFAULT_SIZING,
         "max_bars": BACKTEST_MAX_BARS,
     }
 
@@ -237,6 +238,8 @@ def run_backtest_endpoint(
     stop_loss_pct: float | None = Query(None, gt=0, lt=1, description="진입가 대비 손절 비율 (0.02 = 2%)"),
     take_profit_pct: float | None = Query(None, gt=0, lt=1, description="진입가 대비 익절 비율"),
     trailing_stop_pct: float | None = Query(None, gt=0, lt=1, description="보유 중 고점 대비 추격 손절 비율"),
+    buy_pct: float = Query(1.0, gt=0, le=1, description="매수 신호 때 투입할 현금 비율 (0.5 = 현금의 50%)"),
+    sell_tranches: int = Query(1, ge=1, le=backtest.MAX_TRANCHES, description="매도 신호 때 몇 번에 나눠 팔지 (연속 봉에서 균등 분할)"),
     params: str | None = Query(None, max_length=PARAMS_MAX_LEN, description='전략 파라미터 JSON (예: {"short_window":5,"long_window":20})'),
 ):
     """선택한 봉 간격·전략으로 백테스트를 돌려 성과, 거래 목록, 차트용 매수/매도 마커를 반환.
@@ -272,6 +275,7 @@ def run_backtest_endpoint(
                 "take_profit_pct": take_profit_pct,
                 "trailing_stop_pct": trailing_stop_pct,
             },
+            sizing={"buy_pct": buy_pct, "sell_tranches": sell_tranches},
             interval_minutes=INTERVAL_MINUTES[interval],
         )
     except ValueError as e:
