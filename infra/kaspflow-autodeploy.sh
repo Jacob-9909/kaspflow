@@ -26,7 +26,7 @@ REPO_DIR="${REPO_DIR:-/home/ubuntu/kaspflow}"
 GH_REPO="${GH_REPO:-}"                 # 예: "Jacob-9909/kaspflow" (비우면 CI 게이트 skip)
 COMPOSE="${COMPOSE:-docker-compose.prod.yml}"
 BRANCH="${BRANCH:-main}"
-HEALTH="${HEALTH:-http://127.0.0.1:8000/health}"
+HEALTH="${HEALTH:-}"                   # 비우면 아래에서 .env 의 BACKEND_HOST_PORT 로 만든다
 
 log() { printf '%s | %s\n' "$(date '+%F %T')" "$*"; }
 
@@ -35,6 +35,14 @@ exec 9>/tmp/kaspflow-autodeploy.lock
 flock -n 9 || { log "이전 실행이 아직 도는 중 — 건너뜀"; exit 0; }
 
 cd "$REPO_DIR" || { log "❌ $REPO_DIR 없음"; exit 1; }
+
+# 헬스체크 대상: backend 가 호스트에 publish 된 포트는 .env 의 BACKEND_HOST_PORT (기본 8000).
+# 이 VM 은 8000 을 midas-touch 가 쓰므로 .env 에서 8010 으로 옮겨 쓴다. 예전처럼 8000 을 보면
+# midas 의 /health(status=degraded)를 읽어 정상 배포도 '실패'로 판정하고 롤백해 버린다.
+if [ -z "$HEALTH" ]; then
+  BACKEND_PORT="$(sed -n 's/^BACKEND_HOST_PORT=//p' "$REPO_DIR/.env" 2>/dev/null | tail -1 | tr -d "\"' \r")"
+  HEALTH="http://127.0.0.1:${BACKEND_PORT:-8000}/health"
+fi
 
 git fetch -q origin "$BRANCH" || { log "❌ git fetch 실패(네트워크?)"; exit 1; }
 

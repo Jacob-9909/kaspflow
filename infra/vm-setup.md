@@ -141,7 +141,7 @@ docker compose -f docker-compose.prod.yml ps
 ```
 확인:
 ```bash
-curl -s http://127.0.0.1:8000/health           # {"status":"ok"} 면 DB까지 OK
+curl -s http://127.0.0.1:${BACKEND_HOST_PORT:-8000}/health   # {"status":"ok"} 면 DB까지 OK (.env 의 BACKEND_HOST_PORT, VM 은 8010)
 docker compose -f docker-compose.prod.yml logs -f spark   # [batch N] ... rows upsert
 ```
 브라우저: `http://161.33.134.252:8501` (대시보드)

@@ -166,7 +166,7 @@ VM(161.33.134.252, ubuntu, **arm64**)에 실제 배포 성공. end-to-end 동작
 cd ~/kaspflow
 sudo docker compose -f docker-compose.prod.yml ps          # 상태
 sudo docker compose -f docker-compose.prod.yml logs -f spark
-curl -s http://127.0.0.1:8000/health                        # {"status":"ok"}
+curl -s http://127.0.0.1:8010/health                        # {"status":"ok"}  (VM: 8000 은 midas-touch, backend 는 .env 의 BACKEND_HOST_PORT=8010)
 journalctl -u kaspflow-autodeploy -f                        # 자동배포 로그
 ```
 

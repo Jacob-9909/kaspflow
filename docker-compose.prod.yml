@@ -113,7 +113,10 @@ services:
     mem_limit: 2g
 
   # ----------------------------------------------------------
-  # Backend API — GHCR 이미지. 호스트 PostgreSQL 조회. (8000)
+  # Backend API — GHCR 이미지. 호스트 PostgreSQL 조회.
+  #   호스트에 publish 되는 포트는 .env 의 BACKEND_HOST_PORT (기본 8000).
+  #   Oracle VM 처럼 8000 을 다른 서비스(midas-touch)가 쓰면 .env 에 BACKEND_HOST_PORT=8010 을 둔다.
+  #   (compose 파일을 직접 고치면 자동배포의 롤백(git reset --hard)이 수정을 지워 버린다. .env 는 git 추적 밖이라 안전.)
   # ----------------------------------------------------------
   backend:
     image: ${IMAGE_PREFIX}-backend:${IMAGE_TAG:-latest}
@@ -122,7 +125,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8000:8000"
+      - "${BACKEND_HOST_PORT:-8000}:8000"
     environment:
       POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
