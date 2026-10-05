@@ -38,11 +38,18 @@ interface SymbolsResponse {
   symbols: string[];
 }
 
-/** 공통 fetch 헬퍼: 실패하면 에러를 던진다. */
+/** 공통 fetch 헬퍼: 실패하면 에러를 던진다. (백엔드가 detail 을 주면 그 메시지를 사용) */
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) {
-    throw new Error(`요청 실패 (${res.status}): ${url}`);
+    let detail = "";
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch {
+      /* JSON 이 아니면 무시 */
+    }
+    throw new Error(detail || `요청 실패 (${res.status}): ${url}`);
   }
   return (await res.json()) as T;
 }
@@ -73,4 +80,118 @@ export async function fetchIntervals(): Promise<string[]> {
     // 백엔드가 구버전이면 최소한 1m 은 되도록 폴백
     return ["1m"];
   }
+}
+
+// ============================================================
+// 백테스트 (midas-touch 전략 이식, 백엔드 backtest.py)
+// ============================================================
+
+/** 전략 정보: /backtest/strategies 의 항목 */
+export interface StrategyInfo {
+  id: string;
+  label: string;
+  params: Record<string, number>; // 기본 파라미터 (입력 폼의 초기값)
+}
+
+/** 백테스트 실행 설정 (UI 입력값). 손절/익절/추격은 비율(0.02 = 2%), null = 미사용 */
+export interface BacktestConfig {
+  strategy: string;
+  limit: number; // 백테스트에 쓸 최근 봉 수 (차트도 같은 수를 불러온다)
+  initialCapital: number;
+  feeBps: number;
+  stopLossPct: number | null;
+  takeProfitPct: number | null;
+  trailingStopPct: number | null;
+  params: Record<string, number>;
+}
+
+/** 차트에 찍을 매수/매도 이벤트. time 은 lightweight-charts 와 같은 UTC epoch 초 */
+export interface BacktestMarker {
+  time: number;
+  side: "buy" | "sell";
+  price: number;
+  reason: string; // signal | stop_loss | take_profit | trailing_stop
+  pnl_pct: number | null; // 매도 시 손익(수수료 반영), 매수는 null
+}
+
+export interface BacktestTrade {
+  entry_time: number;
+  exit_time: number;
+  entry_price: number;
+  exit_price: number;
+  qty: number;
+  pnl_pct: number;
+  pnl_amount: number;
+  exit_reason: string;
+  bars_held: number;
+}
+
+export interface BacktestMetrics {
+  total_return: number;
+  buy_hold_return: number;
+  max_drawdown: number;
+  final_value: number;
+  trade_count: number;
+  win_rate: number;
+  profit_factor: number;
+  avg_win_pct: number;
+  avg_loss_pct: number;
+  sharpe_ratio: number;
+  exposure_pct: number;
+  exit_reasons: Record<string, number>;
+}
+
+export interface BacktestResult {
+  symbol: string;
+  interval: string;
+  strategy: string;
+  label: string;
+  bars: number;
+  initial_capital: number;
+  params_used: Record<string, number>;
+  metrics: BacktestMetrics;
+  trades: BacktestTrade[];
+  markers: BacktestMarker[];
+  open_position: {
+    entry_time: number;
+    entry_price: number;
+    qty: number;
+    unrealized_pct: number;
+  } | null;
+  warnings: string[];
+}
+
+interface StrategiesResponse {
+  strategies: StrategyInfo[];
+  risk_defaults: { fee_bps: number };
+}
+
+/** 전략 목록 + 기본 리스크 설정. 구버전 백엔드(미지원)면 null -> 패널을 숨긴다. */
+export async function fetchBacktestStrategies(): Promise<StrategiesResponse | null> {
+  try {
+    return await getJson<StrategiesResponse>("/api/backtest/strategies");
+  } catch {
+    return null;
+  }
+}
+
+/** 선택한 봉 간격(interval)으로 백테스트를 실행한다. */
+export async function fetchBacktest(
+  symbol: string,
+  interval: string,
+  cfg: BacktestConfig,
+): Promise<BacktestResult> {
+  const q = new URLSearchParams({
+    symbol,
+    interval,
+    strategy: cfg.strategy,
+    limit: String(cfg.limit),
+    initial_capital: String(cfg.initialCapital),
+    fee_bps: String(cfg.feeBps),
+  });
+  if (cfg.stopLossPct !== null) q.set("stop_loss_pct", String(cfg.stopLossPct));
+  if (cfg.takeProfitPct !== null) q.set("take_profit_pct", String(cfg.takeProfitPct));
+  if (cfg.trailingStopPct !== null) q.set("trailing_stop_pct", String(cfg.trailingStopPct));
+  if (Object.keys(cfg.params).length > 0) q.set("params", JSON.stringify(cfg.params));
+  return getJson<BacktestResult>(`/api/backtest?${q.toString()}`);
 }

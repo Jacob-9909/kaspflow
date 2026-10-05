@@ -11,6 +11,7 @@
  *     -> 매번 차트를 새로 만들지 않아 깜빡임이 없고 부드럽다.
  *   - lightweight-charts의 시간(time)은 "초 단위 UTC epoch"(UTCTimestamp)이다.
  *     우리 데이터의 window_start(ISO 문자열)를 초 단위로 변환해줘야 한다.
+ *   - 백테스트 매수/매도는 series.setMarkers 로 캔들 위에 화살표로 표시한다.
  */
 import { useEffect, useRef } from "react";
 import {
@@ -18,15 +19,53 @@ import {
   ColorType,
   type IChartApi,
   type ISeriesApi,
+  type SeriesMarker,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import type { Candle } from "../api";
+import type { BacktestMarker, Candle } from "../api";
 
 interface Props {
   candles: Candle[];
+  // 백테스트 매수/매도 이벤트 (없으면 마커를 그리지 않는다)
+  markers?: BacktestMarker[];
 }
 
-export function CandleChart({ candles }: Props) {
+// 리스크 청산 사유 -> 마커에 붙일 짧은 꼬리표 (신호 청산은 표시 생략)
+const REASON_TAG: Record<string, string> = {
+  stop_loss: "SL",
+  take_profit: "TP",
+  trailing_stop: "TS",
+};
+
+/** 백테스트 이벤트 -> lightweight-charts 마커. 매수는 봉 아래 ▲(초록), 매도는 봉 위 ▼(빨강). */
+function toSeriesMarkers(markers: BacktestMarker[], candleTimes: Set<number>): SeriesMarker<Time>[] {
+  return markers
+    .filter((m) => candleTimes.has(m.time)) // 화면에 없는 봉의 마커는 제외
+    .sort((a, b) => a.time - b.time) // lightweight-charts 는 시간 오름차순을 요구
+    .map((m): SeriesMarker<Time> => {
+      if (m.side === "buy") {
+        // 매수는 화살표만 (촘촘한 구간에서 글자가 겹치지 않게)
+        return {
+          time: m.time as UTCTimestamp,
+          position: "belowBar",
+          shape: "arrowUp",
+          color: "#26a69a",
+        };
+      }
+      const pct = m.pnl_pct === null ? "" : `${m.pnl_pct >= 0 ? "+" : ""}${(m.pnl_pct * 100).toFixed(2)}%`;
+      const tag = REASON_TAG[m.reason];
+      return {
+        time: m.time as UTCTimestamp,
+        position: "aboveBar",
+        shape: "arrowDown",
+        color: "#ef5350",
+        text: tag ? `${tag} ${pct}` : pct, // 매도는 손익 % (리스크 청산이면 SL/TP/TS 꼬리표)
+      };
+    });
+}
+
+export function CandleChart({ candles, markers }: Props) {
   // 차트를 그릴 DOM 요소(div)에 대한 참조
   const containerRef = useRef<HTMLDivElement>(null);
   // 차트/시리즈 인스턴스를 리렌더 사이에 유지하기 위한 참조
@@ -123,6 +162,15 @@ export function CandleChart({ candles }: Props) {
     // 최신 데이터가 잘 보이도록 시간축을 데이터에 맞춰준다
     chartRef.current?.timeScale().fitContent();
   }, [candles]);
+
+  // 3) 백테스트 마커 갱신: 캔들 데이터가 먼저 들어간 뒤(위 effect) 마커를 얹는다.
+  //    markers 가 없거나 비면 빈 배열로 지워서, 백테스트를 끄면 마커도 사라진다.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const times = new Set(candles.map((c) => Date.parse(c.window_start) / 1000));
+    series.setMarkers(markers && markers.length > 0 ? toSeriesMarkers(markers, times) : []);
+  }, [candles, markers]);
 
   return <div ref={containerRef} style={{ width: "100%" }} />;
 }
