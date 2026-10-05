@@ -6,7 +6,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
+COPY app.py backtest.py ./
 
 # uvicorn으로 FastAPI 실행. 0.0.0.0 으로 열어야 컨테이너 밖에서 접속 가능.
 EXPOSE 8000

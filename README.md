@@ -117,6 +117,33 @@ npm run dev        # http://localhost:5173 (핫 리로드)
 | DB 적재 | `docker compose exec postgres psql -U crypto -c "SELECT count(*) FROM ohlc_1m;"` | 행 수 증가 |
 | API | http://localhost:8000/ohlc?symbol=BTCUSDT | JSON 캔들 배열 |
 | 대시보드 | http://localhost:8501 | 캔들차트 표시 |
+| 백테스트 | http://localhost:8000/backtest?symbol=BTCUSDT&interval=5m&strategy=macd | `markers`(매수/매도), `metrics` JSON |
+
+---
+
+## 📊 백테스트 (midas-touch 전략 이식)
+
+대시보드의 **백테스트** 패널을 켜면 선택한 **봉 간격**(상단 `간격`: 1m/5m/15m/1h/4h/1d)마다 전략 신호를 평가하고, 캔들 차트에 **매수(▲, 초록) / 매도(▼, 빨강 + 손익%)** 를 찍고 성과 지표·거래 목록을 보여줍니다.
+
+- 전략: SMA 교차 · MACD · RSI · 볼린저 밴드 · OBV · 복합(하위 5개 다수결). 로직과 기본 파라미터는 [midas-touch](https://github.com/Jacob-9909/midas-touch) `stock_analyzer.py` 와 동일하며, 같은 데이터에서 신호·체결이 일치함을 확인했습니다.
+- 리스크/비용: 수수료(편도 bp), 손절 · 익절 · 추격손절(%). 리스크 청산이 신호 청산보다 우선합니다.
+- 코인용 조정: 소수 수량 전액 매수, 수수료 기본 10bp, 손절·익절·추격은 기본 꺼짐(midas 기본값은 일봉 기준이라 분봉엔 과함), 샤프 연환산은 봉 간격 기준.
+- 한계: 신호 봉의 종가로 체결(슬리피지 미반영)이라 결과가 낙관적이며, 집계 중인 마지막 봉은 제외합니다. midas 기본 파라미터는 일봉 주식용이라 분봉 코인에서는 손실이 날 수 있습니다. **투자 조언이 아닙니다.**
+- API: `GET /backtest` (파라미터는 `/docs` 참고), `GET /backtest/strategies`. 코드는 `backend/backtest.py`, 테스트는 `cd backend && python -m unittest discover -s tests`.
+
+### 과거 데이터 일회성 백필
+
+Producer 를 켠 시점부터만 쌓이므로 과거 봉은 Binance 공개 klines 에서 **한 번** 채웁니다. (`scripts/backfill_klines.py`, Spark 봉과 OHLC·거래량·체결 수가 같은 정의 — 서버 봉 116분을 대조해 전부 일치 확인)
+
+```bash
+# 1) DRY-RUN (기본): DB 는 읽기만 하고 '몇 행이 새로 들어갈지'만 출력
+docker compose -f docker-compose.prod.yml exec -T backend python - --days 30 < scripts/backfill_klines.py
+# 2) 확인 후 적재
+docker compose -f docker-compose.prod.yml exec -T backend python - --days 30 --apply < scripts/backfill_klines.py
+```
+
+- `ON CONFLICT DO NOTHING` 이라 기존(Spark) 행은 덮어쓰지 않고, 여러 번 돌려도 같은 결과입니다. 심볼 단위 트랜잭션이라 실패하면 그 심볼은 하나도 안 들어갑니다.
+- 1분봉은 하루 심볼당 약 1,440행입니다. `/ohlc` 재집계 쿼리는 심볼 전체 행을 훑으므로 30~60일 정도를 권장합니다.
 
 ---
 
@@ -148,6 +175,8 @@ crypto-realtime-dashboard/
 │   └── init.sql             # 3️⃣ 테이블 스키마 (최초 기동 시 자동 실행)
 ├── backend/                 # 4️⃣ Postgres → REST API
 │   ├── app.py
+│   ├── backtest.py          #   백테스트 엔진 (midas-touch 전략 이식, 순수 함수)
+│   ├── tests/               #   백테스트 유닛 테스트
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── dashboard/               # 5️⃣ API → 실시간 차트 (React + Vite + lightweight-charts)
@@ -224,6 +253,7 @@ docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compo
 
 - **CD 완성**: Oracle VM SSH 배포 잡 추가 (위 CI/CD 섹션 참고).
 - 거래량 급증 탐지 → `price_alert` 테이블 채우기 (스키마는 이미 준비됨).
-- 이동평균/볼린저 밴드 등 추가 지표.
+- 이동평균/볼린저 밴드 등 추가 지표 (차트 오버레이).
+- 백테스트: 파라미터 그리드 서치(midas `grid_search` 이식), 자본곡선 표시, 다음 봉 시가 체결 옵션.
 - 여러 거래소 동시 수집 → 거래소 간 가격차(김프) 모니터링.
 - Grafana로 대시보드 교체, Cassandra로 저장소 교체 실습.

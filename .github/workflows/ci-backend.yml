@@ -11,8 +11,7 @@
 #   2) producer: 의존성 설치 후 문법/컴파일 확인.
 #   (spark 잡은 pyspark 런타임이 무거워 CI에선 py_compile 만 수행)
 #
-# 참고: 아직 유닛 테스트가 없어 "import/compile 이 깨지지 않는지"까지 검증한다.
-#       테스트가 추가되면 아래에 pytest 스텝을 넣으면 된다.
+# 참고: 유닛 테스트는 backend/tests (백테스트 엔진)에 있고, 그 외는 import/compile 검증까지만 한다.
 # ============================================================
 name: CI Backend
 
@@ -52,6 +51,11 @@ jobs:
       - name: backend import 스모크 테스트
         working-directory: backend
         run: python -c "import app; print('backend app import OK')"
+
+      # 백테스트 엔진 유닛 테스트 (DB/네트워크 불필요, 표준 unittest)
+      - name: backend 유닛 테스트
+        working-directory: backend
+        run: python -m unittest discover -s tests -v
 
       - name: producer 의존성 설치
         run: pip install -r producer/requirements.txt
