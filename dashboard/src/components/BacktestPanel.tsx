@@ -29,7 +29,6 @@ interface Props {
 
 // 차트에도 같은 수의 봉을 불러오므로 /ohlc 상한(1000) 안에서 고른다.
 const BAR_OPTIONS = [200, 500, 1000];
-const MAX_TRANCHES = 10; // 백엔드 backtest.MAX_TRANCHES 와 같다
 
 const REASON_LABEL: Record<string, string> = {
   signal: "신호",
@@ -84,8 +83,6 @@ export function BacktestPanel({
   const [sl, setSl] = useState(pctToInput(config.stopLossPct));
   const [tp, setTp] = useState(pctToInput(config.takeProfitPct));
   const [ts, setTs] = useState(pctToInput(config.trailingStopPct));
-  const [buyPct, setBuyPct] = useState(pctToInput(config.buyPct));
-  const [tranches, setTranches] = useState(String(config.sellTranches));
   const [params, setParams] = useState<Record<string, string>>(paramsToInput(config.params));
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -123,16 +120,6 @@ export function BacktestPanel({
     const tsN = pct(ts, "추격손절");
     if (slN === undefined || tpN === undefined || tsN === undefined) return;
 
-    // 포지션 크기: 매수 비중(%) -> 비율, 분할 매도 횟수(정수 1~10)
-    const buyN = toNum(buyPct);
-    if (buyN === null || !Number.isFinite(buyN) || buyN <= 0 || buyN > 100) {
-      return setFormError("매수 비중은 0 초과 100 이하의 % 값이어야 합니다.");
-    }
-    const trN = toNum(tranches);
-    if (trN === null || !Number.isInteger(trN) || trN < 1 || trN > MAX_TRANCHES) {
-      return setFormError(`분할 매도 횟수는 1~${MAX_TRANCHES} 사이 정수여야 합니다.`);
-    }
-
     const paramsN: Record<string, number> = {};
     for (const [k, v] of Object.entries(params)) {
       const n = Number(v);
@@ -149,8 +136,6 @@ export function BacktestPanel({
       stopLossPct: slN,
       takeProfitPct: tpN,
       trailingStopPct: tsN,
-      buyPct: buyN / 100,
-      sellTranches: trN,
       params: paramsN,
     });
   };
@@ -215,14 +200,6 @@ export function BacktestPanel({
               <label className="field">
                 <span>수수료 (bp, 편도)</span>
                 <input inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
-              </label>
-              <label className="field">
-                <span>매수 비중 (% of 현금)</span>
-                <input inputMode="decimal" value={buyPct} onChange={(e) => setBuyPct(e.target.value)} />
-              </label>
-              <label className="field">
-                <span>분할 매도 (회)</span>
-                <input inputMode="numeric" value={tranches} onChange={(e) => setTranches(e.target.value)} />
               </label>
               <label className="field">
                 <span>손절 (%)</span>
@@ -296,8 +273,7 @@ export function BacktestPanel({
               {result.open_position && (
                 <p className="bt__open">
                   보유 중 · 진입 {timeFmt(result.open_position.entry_time)} @{" "}
-                  {priceFmt(result.open_position.entry_price)}
-                  {result.open_position.sold_legs > 0 && ` · 분할 매도 ${result.open_position.sold_legs}회 진행`} · 평가손익{" "}
+                  {priceFmt(result.open_position.entry_price)} · 평가손익{" "}
                   <b className={result.open_position.unrealized_pct >= 0 ? "up" : "down"}>
                     {signedPct(result.open_position.unrealized_pct)}
                   </b>
@@ -318,7 +294,7 @@ export function BacktestPanel({
                         <th>진입</th>
                         <th>청산</th>
                         <th className="num">진입가</th>
-                        <th className="num">청산가 (평균)</th>
+                        <th className="num">청산가</th>
                         <th className="num">손익</th>
                         <th>사유</th>
                       </tr>
@@ -331,10 +307,7 @@ export function BacktestPanel({
                           <td className="num">{priceFmt(t.entry_price)}</td>
                           <td className="num">{priceFmt(t.exit_price)}</td>
                           <td className={`num ${t.pnl_pct >= 0 ? "up" : "down"}`}>{signedPct(t.pnl_pct)}</td>
-                          <td>
-                            {REASON_LABEL[t.exit_reason] ?? t.exit_reason}
-                            {t.legs > 1 && ` ×${t.legs}`}
-                          </td>
+                          <td>{REASON_LABEL[t.exit_reason] ?? t.exit_reason}</td>
                         </tr>
                       ))}
                     </tbody>

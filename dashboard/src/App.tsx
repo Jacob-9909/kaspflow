@@ -116,8 +116,6 @@ export default function App() {
         stopLossPct: null,
         takeProfitPct: null,
         trailingStopPct: null,
-        buyPct: res.sizing_defaults?.buy_pct ?? 1,
-        sellTranches: res.sizing_defaults?.sell_tranches ?? 1,
         params: first.params,
       });
     });
