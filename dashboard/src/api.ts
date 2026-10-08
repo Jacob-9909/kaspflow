@@ -30,7 +30,14 @@ export interface Candle {
 interface OhlcResponse {
   symbol: string;
   count: number;
+  earliest?: string | null; // 저장된 가장 오래된 버킷의 시작 시각 (과거 끝 판단용, 구버전 백엔드엔 없음)
   candles: Candle[];
+}
+
+/** fetchOhlc 결과: 봉 + 저장소의 가장 오래된 버킷 시각 */
+export interface OhlcPage {
+  candles: Candle[];
+  earliest: string | null;
 }
 
 // /symbols 응답 형태
@@ -60,15 +67,20 @@ export async function fetchSymbols(): Promise<string[]> {
   return data.symbols;
 }
 
-/** 특정 심볼의 최근 봉을 시간 오름차순으로 가져온다. interval 기본 1m. */
-export async function fetchOhlc(
+/**
+ * 특정 심볼의 봉을 시간 오름차순으로 가져온다. interval 기본 1m.
+ * before 를 주면 그 시각보다 이전의 봉만 받는다(왼쪽으로 스크롤할 때 과거를 이어 붙이는 용도).
+ */
+export async function fetchOhlcPage(
   symbol: string,
   interval = "1m",
   limit = 120,
-): Promise<Candle[]> {
+  before?: string,
+): Promise<OhlcPage> {
   const params = new URLSearchParams({ symbol, interval, limit: String(limit) });
+  if (before) params.set("before", before);
   const data = await getJson<OhlcResponse>(`/api/ohlc?${params.toString()}`);
-  return data.candles;
+  return { candles: data.candles, earliest: data.earliest ?? null };
 }
 
 /** 지원하는 봉 간격 목록 (예: ["1m","5m","15m","1h","4h","1d"]). */

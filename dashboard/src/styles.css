@@ -342,6 +342,18 @@ body {
   box-shadow: var(--shadow);
 }
 
+/* 차트 아래 상태줄: 불러온 봉 수 / 과거 로딩 상태 */
+.chart-status {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 10px 6px 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- 상태 텍스트 ---------- */
 .muted {
   color: var(--muted);

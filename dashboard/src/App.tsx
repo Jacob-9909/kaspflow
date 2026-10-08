@@ -7,6 +7,8 @@
  *   3. 최신 캔들 + 첫 캔들로 등락(가격/퍼센트)을 계산해 가격 헤더로 강조한다.
  *   4. 요약 지표(고/저/거래량/체결수)를 색상 코딩된 카드로 보여준다.
  *   5. 캔들 데이터를 CandleChart 에 넘겨 차트를 그린다.
+ *      봉은 한 배열로 유지한다: 5초 폴링은 최신 구간만 뒤쪽에 덮어쓰고(mergeTail),
+ *      차트를 왼쪽 끝까지 스크롤하면 과거 구간을 앞에 이어 붙인다(loadOlder -> prependOlder).
  *   6. 백테스트를 켜면 /backtest 결과(매수/매도 마커, 성과 지표)를 함께 불러와
  *      차트에 마커를 찍고 BacktestPanel 에 결과를 보여준다.
  *
@@ -14,10 +16,10 @@
  *   App() 안의 useEffect 2개 -> 파생값(latest/first/change) -> return JSX
  *   (헤더+라이브 / 툴바 / 가격헤더 / 지표카드 / 차트)
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchSymbols,
-  fetchOhlc,
+  fetchOhlcPage,
   fetchIntervals,
   fetchBacktest,
   fetchBacktestStrategies,
@@ -26,6 +28,7 @@ import {
   type Candle,
   type StrategyInfo,
 } from "./api";
+import { mergeTail, prependOlder, stepMs } from "./candles";
 import { BacktestPanel } from "./components/BacktestPanel";
 import { CandleChart } from "./components/CandleChart";
 import { SymbolSelector } from "./components/SymbolSelector";
@@ -33,8 +36,17 @@ import { SymbolSelector } from "./components/SymbolSelector";
 // 폴링 주기(ms). 백엔드/DB 갱신 주기(Spark 5초 트리거)와 맞췄다.
 const REFRESH_MS = 5000;
 
-// 백테스트를 꺼 둔 평소에 차트가 불러오는 봉 수. 켜면 백테스트의 '기간'과 같은 수를 불러온다.
+// 백테스트를 꺼 둔 평소에 차트가 처음 불러오는 봉 수. 켜면 백테스트의 '기간'과 같은 수를 불러온다.
 const DEFAULT_LIMIT = 120;
+
+// 5초 폴링 때 받는 최신 구간 크기. 이미 가진 봉의 뒤쪽을 이 구간으로 덮어쓴다.
+const TAIL_LIMIT = 120;
+
+// 왼쪽으로 스크롤할 때 한 번에 더 불러오는 과거 봉 수 (백엔드 /ohlc 상한 1000 이내).
+const OLDER_CHUNK = 1000;
+
+// 메모리/렌더 보호용: 이만큼 불러오면 더는 과거를 이어 붙이지 않는다.
+const MAX_LOADED = 20000;
 
 // 숫자를 보기 좋게(천단위 콤마) 표시
 const fmt = (n: number, digits = 2) =>
@@ -76,6 +88,10 @@ export default function App() {
   const [intervals, setIntervals] = useState<string[]>(["1m"]);
   const [interval, setInterval_] = useState<string>("1m");
   const [candles, setCandles] = useState<Candle[]>([]);
+  // 과거 이어 붙이기 상태: 저장소의 가장 오래된 버킷, 불러오는 중인지, 더는 없는지
+  const [earliest, setEarliest] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [noMoreOlder, setNoMoreOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   // 백테스트: 전략 목록(서버 제공), 켜짐 여부, 적용된 설정, 결과
@@ -121,56 +137,150 @@ export default function App() {
     });
   }, []);
 
-  // 2) 선택 심볼/인터벌/백테스트 설정이 바뀌거나, 5초마다: 봉(+백테스트) 다시 로드
+  // 차트가 처음 불러올 봉 수. 백테스트를 켜면 마커가 전부 보이도록 백테스트 '기간'과 같게 한다.
+  const initialLimit = btOn && btConfig ? btConfig.limit : DEFAULT_LIMIT;
+  // "다른 차트인가"를 가르는 키. 바뀌면 불러 둔 과거를 버리고 처음부터 다시 시작한다.
+  const viewKey = `${selected}|${interval}|${initialLimit}`;
+  const viewKeyRef = useRef(viewKey);
+  viewKeyRef.current = viewKey;
+
+  // 비동기 콜백(과거 로딩)에서 최신 값을 읽기 위한 ref
+  const candlesRef = useRef<Candle[]>([]);
+  candlesRef.current = candles;
+  const earliestRef = useRef<string | null>(null);
+  earliestRef.current = earliest;
+  const loadingOlderRef = useRef(false);
+  const noMoreOlderRef = useRef(false);
+  noMoreOlderRef.current = noMoreOlder;
+
+  // 2) 캔들 로드: 차트가 바뀌면 초기 로드, 이후 5초마다 최신 구간(tail)만 받아 뒤쪽에 덮어쓴다.
+  //    (이전에는 매번 '최근 N봉 통째 교체'라 과거를 불러와도 5초 뒤 사라졌다)
   useEffect(() => {
     if (!selected) return;
 
-    let cancelled = false; // 언마운트 후 setState 방지 플래그
-    const bt = btOn ? btConfig : null;
-    // 백테스트를 켜면 차트도 같은 수의 봉을 불러와 매수/매도 마커가 전부 보이게 한다.
-    const limit = bt ? bt.limit : DEFAULT_LIMIT;
+    let cancelled = false; // 언마운트/차트 전환 후 setState 방지 플래그
+    const step = stepMs(interval);
 
-    const load = () => {
-      fetchOhlc(selected, interval, limit)
-        .then((data) => {
-          if (!cancelled) {
-            setCandles(data);
-            setError(null);
-            setUpdatedAt(Date.now());
-          }
+    // 새 차트: 이전 차트의 봉과 과거 이어 붙이기 상태를 비운다.
+    setCandles([]);
+    setEarliest(null);
+    setNoMoreOlder(false);
+    setLoadingOlder(false);
+    loadingOlderRef.current = false;
+
+    const loadInitial = () =>
+      fetchOhlcPage(selected, interval, initialLimit)
+        .then((page) => {
+          if (cancelled) return;
+          setCandles(page.candles);
+          setEarliest(page.earliest);
+          setError(null);
+          setUpdatedAt(Date.now());
         })
         .catch((e) => {
           if (!cancelled) setError(String(e));
         });
 
-      if (bt) {
-        fetchBacktest(selected, interval, bt)
-          .then((res) => {
-            if (!cancelled) {
-              setBtResult(res);
-              setBtError(null);
-            }
-          })
-          .catch((e) => {
-            if (!cancelled) setBtError(e instanceof Error ? e.message : String(e));
-          })
-          .finally(() => {
-            if (!cancelled) setBtLoading(false);
-          });
-      }
-    };
+    const pollTail = () =>
+      fetchOhlcPage(selected, interval, TAIL_LIMIT)
+        .then((page) => {
+          if (cancelled) return;
+          // 가진 봉과 이어지지 않으면(탭이 오래 멈췄다 돌아온 경우 등) 이 구간으로 새로 시작한다.
+          setCandles((prev) => mergeTail(prev, page.candles, step) ?? page.candles);
+          setError(null);
+          setUpdatedAt(Date.now());
+        })
+        .catch((e) => {
+          if (!cancelled) setError(String(e));
+        });
 
-    if (bt) {
-      setBtLoading(true);
-    } else {
+    loadInitial();
+    // window.setInterval: 위 상태변수 interval 과 이름이 겹쳐 window. 으로 명시
+    const timer = window.setInterval(pollTail, REFRESH_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [selected, interval, initialLimit]);
+
+  // 과거 이어 붙이기: 차트가 왼쪽 끝 근처까지 스크롤되면 호출된다.
+  const loadOlder = useCallback(async () => {
+    if (!selected) return;
+    const cur = candlesRef.current;
+    if (cur.length === 0 || loadingOlderRef.current || noMoreOlderRef.current) return;
+
+    // 가진 가장 오래된 봉이 저장소의 첫 버킷이면 더 없음
+    const oldest = cur[0].window_start;
+    const earliestKnown = earliestRef.current;
+    if (earliestKnown && Date.parse(oldest) <= Date.parse(earliestKnown)) {
+      setNoMoreOlder(true);
+      return;
+    }
+    if (cur.length >= MAX_LOADED) {
+      setNoMoreOlder(true);
+      return;
+    }
+
+    const key = viewKeyRef.current;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const page = await fetchOhlcPage(selected, interval, OLDER_CHUNK, oldest);
+      if (viewKeyRef.current !== key) return; // 기다리는 사이 심볼/간격이 바뀌었으면 버린다
+      // 가진 첫 봉보다 과거인 봉이 하나도 없으면 더는 진전이 없다(끝에 도달했거나, before 를 모르는 구버전 서버).
+      // 이때 멈추지 않으면 같은 요청을 왼쪽 가장자리마다 무한히 되풀이한다.
+      const oldestMs = Date.parse(oldest);
+      if (!page.candles.some((c) => Date.parse(c.window_start) < oldestMs)) {
+        setNoMoreOlder(true);
+        return;
+      }
+      setCandles((prev) => prependOlder(prev, page.candles));
+      if (page.earliest) setEarliest(page.earliest);
+      if (page.earliest && Date.parse(page.candles[0].window_start) <= Date.parse(page.earliest)) {
+        setNoMoreOlder(true); // 이번에 저장소의 첫 버킷까지 도달
+      }
+    } catch (e) {
+      if (viewKeyRef.current === key) setError(String(e));
+    } finally {
+      if (viewKeyRef.current === key) {
+        loadingOlderRef.current = false;
+        setLoadingOlder(false);
+      }
+    }
+  }, [selected, interval]);
+
+  // 백테스트: 켜져 있으면 5초마다 결과를 다시 계산해 받아 온다. (캔들 로딩과는 독립)
+  useEffect(() => {
+    if (!selected) return;
+
+    let cancelled = false;
+    const bt = btOn ? btConfig : null;
+
+    if (!bt) {
       setBtResult(null);
       setBtError(null);
+      return;
     }
-    load(); // 즉시 1회
-    // window.setInterval: 위 상태변수 interval 과 이름이 겹쳐 window. 으로 명시
-    const timer = window.setInterval(load, REFRESH_MS);
 
-    // 심볼/인터벌이 바뀌거나 언마운트되면 타이머 정리
+    const run = () =>
+      fetchBacktest(selected, interval, bt)
+        .then((res) => {
+          if (!cancelled) {
+            setBtResult(res);
+            setBtError(null);
+          }
+        })
+        .catch((e) => {
+          if (!cancelled) setBtError(e instanceof Error ? e.message : String(e));
+        })
+        .finally(() => {
+          if (!cancelled) setBtLoading(false);
+        });
+
+    setBtLoading(true);
+    run();
+    const timer = window.setInterval(run, REFRESH_MS);
     return () => {
       cancelled = true;
       clearInterval(timer);
@@ -184,8 +294,10 @@ export default function App() {
   }, []);
 
   // 파생값: 최신/첫 캔들과 등락 계산
+  //   등락은 "처음 보이는 구간(initialLimit 봉)" 기준으로 계산한다. 과거를 더 불러와도 헤더 값이 바뀌지 않게 한다.
   const latest = candles.length > 0 ? candles[candles.length - 1] : null;
-  const first = candles.length > 0 ? candles[0] : null;
+  const shownBars = candles.slice(-initialLimit);
+  const first = shownBars.length > 0 ? shownBars[0] : null;
   const changeAbs = latest && first ? latest.close - first.open : 0;
   const changePct = latest && first && first.open !== 0 ? (changeAbs / first.open) * 100 : 0;
   const up = changeAbs >= 0;
@@ -262,7 +374,7 @@ export default function App() {
                 <span className="price-head__meta-value down">{fmt(latest.low)}</span>
               </div>
               <div>
-                <span className="price-head__meta-label">최근 {candles.length}봉</span>
+                <span className="price-head__meta-label">최근 {shownBars.length}봉</span>
                 <span className="price-head__meta-value">{interval}</span>
               </div>
             </div>
@@ -276,7 +388,20 @@ export default function App() {
           </div>
 
           <div className="chart-card">
-            <CandleChart candles={candles} markers={btShown?.markers} />
+            <CandleChart candles={candles} markers={btShown?.markers} viewKey={viewKey} onNeedOlder={loadOlder} />
+            <div className="chart-status">
+              <span>
+                불러온 {candles.length.toLocaleString()}봉
+                {candles[0] && ` · ${new Date(candles[0].window_start).toLocaleDateString("ko-KR")} ~`}
+              </span>
+              <span>
+                {loadingOlder
+                  ? "과거 불러오는 중…"
+                  : noMoreOlder
+                    ? "저장된 가장 오래된 데이터입니다"
+                    : "← 왼쪽으로 스크롤하면 과거를 더 불러옵니다"}
+              </span>
+            </div>
           </div>
 
           {strategies.length > 0 && btConfig && (

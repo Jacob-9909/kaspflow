@@ -23,6 +23,7 @@ Backend API (FastAPI): PostgreSQL 조회 -> JSON 제공
 import json
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 import psycopg
 from psycopg.rows import dict_row
@@ -102,8 +103,12 @@ def list_intervals():
     return {"intervals": list(INTERVALS.keys())}
 
 
-def _query_ohlc(symbol: str, interval: str, limit: int) -> list[dict]:
+def _query_ohlc(symbol: str, interval: str, limit: int, before: datetime | None = None) -> list[dict]:
     """특정 심볼의 최근 OHLC 봉을 시간 오름차순 dict 리스트로 반환. (/ohlc, /backtest 공용)
+
+    before 를 주면 '그 봉 시작 시각보다 이전'의 봉만 대상으로 한다 (과거로 거슬러 올라가는 페이지네이션).
+    before 가 속한 버킷은 포함하지 않는다. 즉 클라이언트가 가진 가장 오래된 봉의 window_start 를
+    그대로 넘기면 그 봉 바로 앞의 limit 개를 받는다 (겹침/공백 없음).
 
     저장소에는 1분봉(ohlc_1m)만 있으므로, 1m 이 아니면 여기서 **재집계**한다.
       - date_bin(interval, window_start, 기준시각) 으로 1분봉을 버킷으로 묶고
@@ -118,22 +123,28 @@ def _query_ohlc(symbol: str, interval: str, limit: int) -> list[dict]:
 
     pg_interval = INTERVALS[interval]
 
+    # before 는 값을 SQL 문자열에 끼우지 않고 파라미터로만 넘긴다 (절 자체만 조건부로 붙임).
+    #   버킷 경계로 내림(date_bin)해서, 경계가 아닌 값이 와도 걸친 버킷을 반쪽만 반환하지 않는다.
+    params: dict = {"iv": pg_interval, "sym": symbol, "lim": limit, "before": before}
+    cut_plain = "AND window_start < date_bin(%(iv)s::interval, %(before)s::timestamptz, TIMESTAMPTZ 'epoch')" if before else ""
+    cut_alias = "AND o.window_start < date_bin(%(iv)s::interval, %(before)s::timestamptz, TIMESTAMPTZ 'epoch')" if before else ""
+
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             if interval == "1m":
                 # 원본 그대로 (재집계 불필요)
                 cur.execute(
-                    """
+                    f"""
                     SELECT symbol, window_start, open, high, low, close, volume, trade_count
                     FROM (
                         SELECT * FROM ohlc_1m
-                        WHERE symbol = %s
+                        WHERE symbol = %(sym)s {cut_plain}
                         ORDER BY window_start DESC
-                        LIMIT %s
+                        LIMIT %(lim)s
                     ) sub
                     ORDER BY window_start ASC
                     """,
-                    (symbol, limit),
+                    params,
                 )
             else:
                 # 1분봉을 interval 버킷으로 재집계.
@@ -145,18 +156,18 @@ def _query_ohlc(symbol: str, interval: str, limit: int) -> list[dict]:
                 #   거기서 (limit-1) 버킷만큼만 거슬러 올라간 구간(window_start >= 하한)만 집계한다.
                 #   결과는 '최근 limit 개 버킷'으로 같다. (체결이 전혀 없는 긴 공백이 있으면 그만큼 적게 나온다)
                 cur.execute(
-                    """
+                    f"""
                     WITH latest AS (
                         SELECT date_bin(%(iv)s::interval, max(window_start), TIMESTAMPTZ 'epoch') AS bucket
                         FROM ohlc_1m
-                        WHERE symbol = %(sym)s
+                        WHERE symbol = %(sym)s {cut_plain}
                     ),
                     binned AS (
                         SELECT
                             date_bin(%(iv)s::interval, o.window_start, TIMESTAMPTZ 'epoch') AS bucket,
                             o.window_start, o.open, o.high, o.low, o.close, o.volume, o.trade_count
                         FROM ohlc_1m o, latest l
-                        WHERE o.symbol = %(sym)s
+                        WHERE o.symbol = %(sym)s {cut_alias}
                           AND o.window_start >= l.bucket - (%(iv)s::interval * (%(lim)s::int - 1))
                     ),
                     agg AS (
@@ -179,11 +190,25 @@ def _query_ohlc(symbol: str, interval: str, limit: int) -> list[dict]:
                     ) sub
                     ORDER BY window_start ASC
                     """,
-                    {"iv": pg_interval, "sym": symbol, "lim": limit},
+                    params,
                 )
             rows = cur.fetchall()
 
     return rows
+
+
+def _earliest_bucket(symbol: str, interval: str) -> datetime | None:
+    """이 심볼에 저장된 가장 오래된 1분봉이 속한 interval 버킷의 시작 시각 (없으면 None).
+
+    클라이언트가 '더 불러올 과거가 있는지'를 판단하는 기준이다. 봉 개수가 모자란 것만으로
+    끝이라고 단정하면, 중간에 데이터 공백이 있을 때 그 앞의 과거를 영영 못 불러온다.
+    """
+    with pool.connection() as conn:
+        row = conn.execute(
+            "SELECT date_bin(%s::interval, min(window_start), TIMESTAMPTZ 'epoch') FROM ohlc_1m WHERE symbol = %s",
+            (INTERVALS[interval], symbol),
+        ).fetchone()
+    return row[0] if row else None
 
 
 @app.get("/ohlc")
@@ -191,15 +216,26 @@ def get_ohlc(
     symbol: str = Query(..., description="심볼 (예: BTCUSDT)"),
     interval: str = Query("1m", description="봉 간격: 1m/5m/15m/1h/4h/1d"),
     limit: int = Query(120, ge=1, le=1000, description="최근 몇 개의 봉을 가져올지"),
+    before: datetime | None = Query(
+        None,
+        description="이 시각(ISO8601)보다 이전의 봉만. 가진 가장 오래된 봉의 window_start 를 넘기면 그 앞의 limit 개를 받는다 (과거 페이지네이션).",
+    ),
 ):
     """특정 심볼의 최근 OHLC 봉을 시간 오름차순으로 반환. (1m 외 간격은 재집계)"""
-    rows = _query_ohlc(symbol, interval, limit)
+    rows = _query_ohlc(symbol, interval, limit, before)
+    earliest = _earliest_bucket(symbol, interval)
 
     # datetime -> ISO 문자열로 직렬화
     for r in rows:
         r["window_start"] = r["window_start"].isoformat()
 
-    return {"symbol": symbol, "interval": interval, "count": len(rows), "candles": rows}
+    return {
+        "symbol": symbol,
+        "interval": interval,
+        "count": len(rows),
+        "earliest": earliest.isoformat() if earliest else None,  # 저장된 가장 오래된 버킷 (과거 끝 판단용)
+        "candles": rows,
+    }
 
 
 # ------------------------------------------------------------
