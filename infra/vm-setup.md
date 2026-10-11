@@ -12,9 +12,7 @@
 
 VM이 폴링할 원격 저장소가 있어야 한다. 아직 remote가 없다면:
 ```bash
-# 맥의 repo 루트(crypto-realtime-dashboard 상위? 아래 주의)에서
-# 주의: git repo 루트는 crypto-realtime-dashboard/ 이다.
-cd ~/Develop/kaspflow/crypto-realtime-dashboard
+cd ~/Develop/kaspflow
 gh repo create kaspflow --public --source=. --remote=origin --push
 # 또는 이미 만든 repo가 있으면:
 #   git remote add origin https://github.com/<owner>/kaspflow.git
@@ -85,7 +83,7 @@ PGCONF=/etc/postgresql/17/main
 
 ```bash
 cd ~ && git clone https://github.com/<owner>/kaspflow.git
-cd kaspflow/crypto-realtime-dashboard
+cd kaspflow
 
 # init.sql 을 호스트 PG의 crypto DB에 적용 (컨테이너 PG가 아니므로 수동)
 sudo -u postgres psql -d crypto -f db/init.sql
@@ -134,7 +132,7 @@ sudo netfilter-persistent save
 ## 5. 최초 배포 (VM)
 
 ```bash
-cd ~/kaspflow/crypto-realtime-dashboard
+cd ~/kaspflow
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml ps
@@ -152,7 +150,7 @@ docker compose -f docker-compose.prod.yml logs -f spark   # [batch N] ... rows u
 
 main 에 push → publish-images 성공 → VM이 2분 폴링으로 스스로 pull&배포.
 ```bash
-cd ~/kaspflow/crypto-realtime-dashboard/infra
+cd ~/kaspflow/infra
 # CI 게이트를 켜려면 service 파일의 GH_REPO 를 채운다 (예: Jacob-9909/kaspflow)
 sudo nano kaspflow-autodeploy.service     #   Environment=GH_REPO=<owner>/kaspflow
 sudo cp kaspflow-autodeploy.service /etc/systemd/system/

@@ -2,7 +2,7 @@
 
 거래소(Binance) WebSocket 체결 스트림을 **Kafka → Spark Structured Streaming → PostgreSQL → FastAPI → React(Vite)** 로 흘려보내는 엔드투엔드 실시간 데이터 파이프라인 학습 프로젝트입니다. 대시보드는 TradingView의 `lightweight-charts` 로 캔들차트를 그립니다.
 
-설계 배경과 의사결정은 상위 폴더의 `crypto-realtime-dashboard-DESIGN.md` 를 참고하세요.
+설계 배경과 의사결정은 `docs/design.md`, 구성도는 `docs/architecture.md` 를 참고하세요.
 
 ---
 
@@ -161,7 +161,7 @@ docker compose -f docker-compose.prod.yml exec -T backend python - --days 30 --a
 ## 📁 디렉터리 구조
 
 ```
-crypto-realtime-dashboard/
+kaspflow/
 ├── docker-compose.yml       # 0️⃣ 전체 오케스트레이션 (여기부터 보기)
 ├── .env.example             # 설정 값 예시 (.env로 복사)
 ├── producer/                # 1️⃣ 거래소 WS → Kafka
@@ -243,7 +243,7 @@ ghcr.io/<owner>/<repo>-spark:latest
 ssh oracle_vm
 curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER && newgrp docker
 # PG crypto DB 생성 + init.sql 적용 + pg_hba/listen 설정 (런북 §2~3)
-cd ~/kaspflow/crypto-realtime-dashboard && cp .env.prod.example .env && nano .env
+cd ~/kaspflow && cp .env.prod.example .env && nano .env
 docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
 ```
 
