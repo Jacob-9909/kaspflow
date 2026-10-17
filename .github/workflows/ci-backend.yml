@@ -75,6 +75,13 @@ jobs:
         working-directory: backend
         run: python -c "import app; print('backend app import OK')"
 
+      # 위 검사는 소스 폴더에서 돌아서 Dockerfile 의 COPY 누락을 못 잡는다 (2026-10-17 장애: news_features 누락).
+      # 운영 이미지를 그대로 빌드해 그 안에서 import 한다.
+      - name: backend 이미지 import 스모크 테스트
+        run: |
+          docker build -q -t backend-ci backend
+          docker run --rm backend-ci python -c "import app; print('backend image import OK')"
+
       # 백테스트 엔진 유닛 테스트 (DB/네트워크 불필요, 표준 unittest)
       - name: backend 유닛 테스트
         working-directory: backend
