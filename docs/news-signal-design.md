@@ -36,7 +36,9 @@
 
 **로컬 E2E 확인(2026-10-17, 맥 Docker)**: RSS 8개 피드 전부 수집 성공(첫 폴링 204건: Cointelegraph 112, Decrypt 37, CoinDesk 25, The Block 20, Bitcoin Magazine 10) → `news-raw` → signal-worker(저장 전용) → `news_raw` 까지 실제 브로커로 동작. `INSTALL_LAYA=1` arm64 이미지 빌드 성공(1.64GB), 컨테이너 상주 메모리 **~2.2GB**. `--backfill` 로 204건 분류: 신호 127행(BTC 73, ETH 44, XRP 6, MARKET 4), 매칭 없음 91건. 기사량은 XRP가 예상대로 가장 적다. Laya 로드 시 경고 `this checkpoint ships invalid temperatures ... Treat confidence from the affected entries as uncalibrated` 가 나온다 → 온도 보정은 선택이 아니라 필수로 본다.
 
-**아직 검증하지 못한 것**: (1) VM 에서의 메모리·속도, (2) 모델 카드의 ECE 0.081 이 **영어 체크포인트** 수치인지(카드의 비교표에서 어느 체크포인트인지 불분명), 영어 체크포인트가 영어 과제에서 다국어보다 정확하다는 주장. M3 에서 두 체크포인트를 같은 라벨로 비교해 확인한다.
+**VM 실측(2026-10-17, M3 분류 켬)**: 재부팅 후 `LAYA_ENABLED=true`, `SIGNAL_WORKER_MEM_LIMIT=3g`. 상주 메모리 **2.1~2.2GB / 3GB**, 호스트 available 약 4.5GB. 처리 속도는 **기사 224건 백필에 38.8분(모델 808MB 다운로드 포함), 기사당 약 10초** — 맥보다 약 10배 느리다(Spark 와 2 OCPU 공유, load avg 4 안팎). 하루 기사 수백 건이면 하루 1시간 안팎이라 실시간 처리는 되지만, 몰려 들어오면 lag 이 생길 수 있다. 첫 기동의 백필은 상주 worker 와 모델 2개가 동시에 뜨지 않게 `docker compose run --rm` 별도 컨테이너로 돌렸다. 주말에는 피드 8개 모두 1시간 가까이 새 기사가 없을 때가 있어 `/news/health` 의 30분 stale 기준은 오탐이 난다(M2 실측 뒤 조정).
+
+**아직 검증하지 못한 것**: (1) 모델 카드의 ECE 0.081 이 **영어 체크포인트** 수치인지(카드의 비교표에서 어느 체크포인트인지 불분명), 영어 체크포인트가 영어 과제에서 다국어보다 정확하다는 주장. M3 에서 두 체크포인트를 같은 라벨로 비교해 확인한다.
 
 **M0 관찰(헤드라인 20건, 정확도 평가가 아님)**: `event_type` 은 대부분 `other`, 감정은 중립 쪽으로 몰림, 관련도(relevance)는 0.3~0.7 대로 낮은 편. 영어 체크포인트의 선택지 설명은 질문당 ~192 토큰 예산을 나눠 쓰므로 설명을 짧게 유지한다(`questions.py`).
 
