@@ -27,11 +27,13 @@ import {
   fetchBacktestStrategies,
   fetchNews,
   fetchNewsHealth,
+  fetchNewsPipeline,
   fetchNewsScore,
   type BacktestConfig,
   type BacktestResult,
   type Candle,
   type NewsHealth,
+  type NewsPipeline,
   type NewsItem,
   type NewsScorePoint,
   type StrategyInfo,
@@ -39,6 +41,7 @@ import {
 import { mergeTail, prependOlder, stepMs } from "./candles";
 import { BacktestPanel } from "./components/BacktestPanel";
 import { CandleChart, groupNewsByBar } from "./components/CandleChart";
+import { LayaFlow } from "./components/LayaFlow";
 import { NewsList } from "./components/NewsList";
 import { NewsScoreChart } from "./components/NewsScoreChart";
 import { SymbolSelector } from "./components/SymbolSelector";
@@ -120,6 +123,8 @@ export default function App() {
   const [news, setNews] = useState<NewsItem[] | null>(null);
   const [newsScore, setNewsScore] = useState<NewsScorePoint[] | null>(null);
   const [newsHealth, setNewsHealth] = useState<NewsHealth | null>(null);
+  const [pipeline, setPipeline] = useState<NewsPipeline | null>(null); // Laya 흐름 패널 (null = 사용 불가)
+  const [traced, setTraced] = useState<NewsItem | null>(null); // Laya 흐름에서 따라갈 기사
   const [pickedBar, setPickedBar] = useState<number | null>(null);
   const [timeRange, setTimeRange] = useState<{ from: number; to: number } | null>(null);
   // 상대시각("N초 전")을 1초마다 다시 그리기 위한 틱
@@ -347,10 +352,14 @@ export default function App() {
   // 수집 상태(마지막 수집 시각): 수집이 멈추면 경고로 보여 준다.
   useEffect(() => {
     let cancelled = false;
-    const run = () =>
+    const run = () => {
       fetchNewsHealth().then((h) => {
         if (!cancelled) setNewsHealth(h);
       });
+      fetchNewsPipeline().then((p) => {
+        if (!cancelled) setPipeline(p);
+      });
+    };
     run();
     const timer = window.setInterval(run, NEWS_REFRESH_MS);
     return () => {
@@ -532,7 +541,12 @@ export default function App() {
                   ? "차트의 다른 봉을 누르면 바뀝니다"
                   : "차트의 ● 점(봉)을 누르면 그 봉에 수집된 기사를 보여 줍니다 · 점 색: 호재/중립/악재"
               }
+              onTrace={pipeline ? setTraced : undefined}
             />
+          )}
+
+          {newsShown !== null && pipeline && (
+            <LayaFlow p={pipeline} traced={traced} onCloseTrace={() => setTraced(null)} />
           )}
 
           {strategies.length > 0 && btConfig && (

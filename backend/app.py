@@ -17,6 +17,7 @@ Backend API (FastAPI): PostgreSQL 조회 -> JSON 제공
   GET /backtest/strategies : 전략 목록/기본 파라미터
   GET /news?symbol=...     : 최근 뉴스 신호 (제목·링크·감정 확률)
   GET /news/health         : 마지막 수집 시각과 경과 시간 (수집 중단 감지)
+  GET /news/pipeline       : Laya 흐름 (단계별 건수·분포·정확도 측정)
   GET /news/score?symbol=...&interval=15m : 봉별 news_score 선 (대시보드 보조 차트)
   GET /features?symbol=...&interval=15m   : 봉별 기술 지표 + 뉴스 피처 (JSON/CSV 내보내기)
 
@@ -397,6 +398,15 @@ def news_health():
     """뉴스 수집 상태: 마지막 collected_at 과 경과 시간. status=stale 이면 수집 중단을 의심한다."""
     with _news_conn() as conn:
         return news_queries.health(conn)
+
+
+@app.get("/news/pipeline")
+def news_pipeline(hours: int = Query(168, ge=1, le=24 * 90, description="최근 몇 시간을 집계할지 (기본 7일)")):
+    """Laya 흐름 패널: 수집 -> 매칭 -> 분류 단계별 건수, 감정·이벤트 분포, 가장 최근 정확도 측정, 전략 기본값."""
+    with _news_conn() as conn:
+        out = news_queries.pipeline(conn, hours)
+    out["strategy_defaults"] = news_features.NEWS_DEFAULT_PARAMS
+    return out
 
 
 def _bars_with_news(symbol, interval, limit, params, model_version):

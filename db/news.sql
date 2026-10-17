@@ -69,3 +69,24 @@ CREATE TABLE IF NOT EXISTS news_label (
     labeled_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (article_id, symbol, field)
 );
+
+-- ------------------------------------------------------------
+-- Laya 정확도 측정 기록. signal-worker/label.py eval --save 가 질문(field)마다 한 행씩 남긴다.
+-- 대시보드의 "Laya 흐름" 패널이 가장 최근 측정을 보여 준다.
+--   labels   : 라벨 출처. 'news_label'(사람) 또는 CSV 파일 이름(예: LLM 대리 라벨)
+--   T        : 온도 보정 값 (표본이 적으면 NULL)
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS news_eval (
+    run_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    model_version  TEXT        NOT NULL,
+    labels         TEXT        NOT NULL,
+    field          TEXT        NOT NULL,     -- relevance | sentiment | event_type
+    n              INTEGER     NOT NULL,
+    acc            DOUBLE PRECISION NOT NULL,
+    baseline       DOUBLE PRECISION NOT NULL,
+    ece_raw        DOUBLE PRECISION NOT NULL,
+    ece_cal        DOUBLE PRECISION,
+    temperature    DOUBLE PRECISION,
+    passed         BOOLEAN     NOT NULL,
+    PRIMARY KEY (run_at, model_version, labels, field)
+);

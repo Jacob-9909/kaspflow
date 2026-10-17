@@ -10,7 +10,7 @@ import type { NewsItem } from "../api";
 const SENTIMENT_LABEL = { positive: "호재", neutral: "중립", negative: "악재" } as const;
 
 // signal-worker/questions.py 의 EVENT_TYPES 와 같은 키
-const EVENT_LABEL: Record<string, string> = {
+export const EVENT_LABEL: Record<string, string> = {
   listing_delisting: "상장·상폐",
   regulation_legal: "규제·법률",
   hack_security: "해킹·보안",
@@ -25,7 +25,17 @@ const timeFmt = (iso: string) =>
 
 const pct = (v: number | null) => (v === null ? "-" : `${Math.round(v * 100)}%`);
 
-export function NewsList({ items, title, hint }: { items: NewsItem[]; title: string; hint?: string }) {
+export function NewsList({
+  items,
+  title,
+  hint,
+  onTrace,
+}: {
+  items: NewsItem[];
+  title: string;
+  hint?: string;
+  onTrace?: (item: NewsItem) => void; // "흐름 보기": Laya 흐름 패널에서 이 기사를 따라간다
+}) {
   return (
     <div className="news">
       <div className="news__head">
@@ -47,7 +57,14 @@ export function NewsList({ items, title, hint }: { items: NewsItem[]; title: str
                   {n.source} · {timeFmt(n.collected_at)} 수집 · {n.symbol === "MARKET" ? "시장 전체" : n.symbol}
                   {n.sentiment && ` · ${SENTIMENT_LABEL[n.sentiment]} (+${pct(n.p_pos)} / -${pct(n.p_neg)})`}
                   {n.event_type && ` · ${EVENT_LABEL[n.event_type] ?? n.event_type}`}
-                  {` · 관련도 ${pct(n.p_relevant)}`}
+                  <span className="news__rel" title="관련도 질문은 정확도가 낮아 전략에 쓰지 않는다 (Laya 흐름 패널 참고)">
+                    {` · 관련도 ${pct(n.p_relevant)}`}
+                  </span>
+                  {onTrace && (
+                    <button type="button" className="news__trace" onClick={() => onTrace(n)}>
+                      흐름 보기
+                    </button>
+                  )}
                 </div>
               </div>
             </li>

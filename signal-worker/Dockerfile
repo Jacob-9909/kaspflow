@@ -24,6 +24,7 @@ RUN if [ "$INSTALL_LAYA" = "1" ]; then \
 
 # 2) 애플리케이션 코드 복사
 COPY main.py matching.py classifier.py questions.py store.py label.py symbols.yaml ./
+COPY eval ./eval
 
 # 3) 실행: Kafka -> Postgres 상주 프로세스
 CMD ["python", "-u", "main.py"]

@@ -69,7 +69,7 @@ def recent_news(
         cur.execute(
             """
             SELECT s.article_id, s.symbol, r.source, r.title, r.url, r.published_at, s.collected_at,
-                   s.p_relevant, s.p_pos, s.p_neu, s.p_neg, s.event_type, s.model_version
+                   s.p_relevant, s.p_pos, s.p_neu, s.p_neg, s.event_type, s.p_event, s.model_version
             FROM news_signal s
             JOIN news_raw r USING (article_id)
             WHERE s.model_version = %(mv)s
@@ -115,3 +115,85 @@ def health(conn) -> dict[str, Any]:
         "signals_24h": signals_24h,
         "model_version": latest_model_version(conn),
     }
+
+
+def pipeline(conn, hours: int) -> dict[str, Any]:
+    """'Laya 흐름' 패널용: 최근 hours 시간 동안 각 단계를 지난 건수와 가장 최근 정확도 측정.
+
+    단계: 수집(news_raw) -> 종목 매칭 / 시장 전체 판정 -> Laya 분류(news_signal) -> 감정·이벤트 분포.
+    매칭이 없고 MARKET 판정도 못 받은 기사는 신호가 없다 = '버려짐'.
+    """
+    mv = latest_model_version(conn)
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT r.source, count(*) AS n,
+                   count(*) FILTER (WHERE EXISTS (
+                       SELECT 1 FROM news_signal s WHERE s.article_id = r.article_id AND s.model_version = %(mv)s
+                   )) AS with_signal
+            FROM news_raw r
+            WHERE r.collected_at >= now() - make_interval(hours => %(h)s)
+            GROUP BY r.source ORDER BY n DESC
+            """,
+            {"mv": mv, "h": hours},
+        )
+        sources = list(cur.fetchall())
+        cur.execute(
+            """
+            SELECT s.symbol, count(*) AS n,
+                   count(*) FILTER (WHERE s.p_pos >= s.p_neu AND s.p_pos >= s.p_neg) AS positive,
+                   count(*) FILTER (WHERE s.p_neg >  s.p_pos AND s.p_neg >= s.p_neu) AS negative,
+                   avg(s.p_pos - s.p_neg) AS avg_score,
+                   count(*) FILTER (WHERE r.published_at IS NOT NULL
+                                      AND s.collected_at - r.published_at <= interval '6 hours') AS fresh
+            FROM news_signal s JOIN news_raw r USING (article_id)
+            WHERE s.model_version = %(mv)s AND s.collected_at >= now() - make_interval(hours => %(h)s)
+            GROUP BY s.symbol ORDER BY s.symbol
+            """,
+            {"mv": mv, "h": hours},
+        )
+        symbols = list(cur.fetchall())
+        cur.execute(
+            """
+            SELECT coalesce(event_type, 'other') AS event_type, count(*) AS n
+            FROM news_signal
+            WHERE model_version = %(mv)s AND collected_at >= now() - make_interval(hours => %(h)s)
+            GROUP BY 1 ORDER BY n DESC
+            """,
+            {"mv": mv, "h": hours},
+        )
+        events = list(cur.fetchall())
+        evals: list[dict[str, Any]] = []
+        if mv is not None and _has_table(cur, "news_eval"):
+            cur.execute(
+                """
+                SELECT run_at, labels, field, n, acc, baseline, ece_raw, ece_cal, temperature, passed
+                FROM news_eval
+                WHERE model_version = %s
+                  AND run_at = (SELECT max(run_at) FROM news_eval WHERE model_version = %s)
+                ORDER BY field
+                """,
+                (mv, mv),
+            )
+            evals = list(cur.fetchall())
+    for s in symbols:
+        s["neutral"] = s["n"] - s["positive"] - s["negative"]
+        s["avg_score"] = None if s["avg_score"] is None else round(float(s["avg_score"]), 4)
+    collected = sum(r["n"] for r in sources)
+    with_signal = sum(r["with_signal"] for r in sources)
+    return {
+        "hours": hours,
+        "model_version": mv,
+        "collected": collected,
+        "with_signal": with_signal,
+        "dropped": collected - with_signal,
+        "sources": sources,
+        "symbols": symbols,
+        "events": events,
+        "eval": evals,
+    }
+
+
+def _has_table(cur, name: str) -> bool:
+    cur.execute("SELECT to_regclass(%s) IS NOT NULL AS ok", (name,))
+    return bool(cur.fetchone()["ok"])

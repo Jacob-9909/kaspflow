@@ -734,3 +734,175 @@ body {
 .bt__row--strong td {
   font-weight: 700;
 }
+
+/* 뉴스 목록: 관련도는 전략에 쓰지 않아 흐리게, "흐름 보기" 버튼 */
+.news__rel {
+  opacity: 0.6;
+}
+.news__trace {
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.news__trace:hover {
+  border-color: var(--accent);
+}
+
+/* Laya 흐름 패널 */
+.laya .up { color: var(--up); }
+.laya .down { color: var(--down); }
+.laya h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.laya p {
+  margin: 4px 0;
+  font-size: 12px;
+}
+.laya__flow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+@media (max-width: 1100px) {
+  .laya__flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .laya__flow { grid-template-columns: minmax(0, 1fr); }
+}
+.laya__stage {
+  position: relative;
+  background: var(--panel-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  min-width: 0;
+}
+.laya__stage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.laya__step {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 700;
+}
+.laya__stage-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.laya__big {
+  font-size: 18px !important;
+  font-weight: 700;
+  color: var(--text);
+}
+.laya__list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.laya__list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+.laya__list--sent li {
+  flex-direction: column;
+  gap: 3px;
+}
+.laya__stack {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--border-soft);
+}
+.laya__stack-up { background: var(--up); }
+.laya__stack-neu { background: #8b95a5; }
+.laya__stack-down { background: var(--down); }
+.laya__questions {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+}
+.laya__questions li {
+  margin-bottom: 6px;
+}
+.laya__questions code {
+  color: var(--text);
+  word-break: break-word;
+}
+.laya__eval {
+  margin-top: 14px;
+}
+.laya__warn {
+  color: #f0b429;
+}
+.laya__hint {
+  margin-top: 12px !important;
+}
+.laya__trace {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius-sm);
+}
+.laya__trace-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.laya__trace-steps {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.laya__trace-steps li {
+  margin-bottom: 8px;
+}
+.laya__trace-steps b {
+  color: var(--text);
+  margin-right: 6px;
+}
+.laya__probs {
+  display: grid;
+  grid-template-columns: 72px minmax(80px, 220px) auto;
+  gap: 4px 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+.laya__probs-row {
+  display: contents;
+}
+.laya__bar {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border-soft);
+  overflow: hidden;
+}
+.laya__bar-fill {
+  display: block;
+  height: 100%;
+  background: #8b95a5;
+}
+.laya__bar-fill--up { background: var(--up); }
+.laya__bar-fill--down { background: var(--down); }

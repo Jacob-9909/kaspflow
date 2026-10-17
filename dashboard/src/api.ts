@@ -248,6 +248,7 @@ export interface NewsItem {
   p_neu: number | null;
   p_neg: number | null;
   event_type: string | null;
+  p_event: Record<string, number> | null; // 이벤트 유형 전체 확률 분포
   sentiment: Sentiment | null;
   model_version: string;
 }
@@ -291,6 +292,47 @@ export interface NewsHealth {
 export async function fetchNewsHealth(): Promise<NewsHealth | null> {
   try {
     return await getJson<NewsHealth>("/api/news/health");
+  } catch {
+    return null;
+  }
+}
+
+// Laya 흐름 패널 (/news/pipeline): 수집 -> 매칭 -> 분류 단계별 건수와 가장 최근 정확도 측정
+export interface NewsPipeline {
+  hours: number;
+  model_version: string | null;
+  collected: number; // 기간 안에 수집된 기사
+  with_signal: number; // 종목 매칭 또는 시장 전체 판정으로 신호가 생긴 기사
+  dropped: number; // 매칭 없음 + 시장 전체 아님 -> 신호 없음
+  sources: { source: string; n: number; with_signal: number }[];
+  symbols: {
+    symbol: string;
+    n: number;
+    positive: number;
+    neutral: number;
+    negative: number;
+    avg_score: number | null;
+    fresh: number; // 발행 6시간 안에 수집된 신호 (전략 max_age 기본값 기준)
+  }[];
+  events: { event_type: string; n: number }[];
+  eval: {
+    run_at: string;
+    labels: string; // 'news_label' = 사람 라벨, 그 외 = CSV 파일 이름(대리 라벨)
+    field: "relevance" | "sentiment" | "event_type";
+    n: number;
+    acc: number;
+    baseline: number;
+    ece_raw: number;
+    ece_cal: number | null;
+    temperature: number | null;
+    passed: boolean;
+  }[];
+  strategy_defaults: Record<string, number>;
+}
+
+export async function fetchNewsPipeline(hours = 168): Promise<NewsPipeline | null> {
+  try {
+    return await getJson<NewsPipeline>(`/api/news/pipeline?hours=${hours}`);
   } catch {
     return null;
   }

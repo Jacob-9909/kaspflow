@@ -6,6 +6,7 @@ M3 라벨링·정확도 측정 도구 (news_label)
   python label.py label [--n 150]          기사x종목 쌍을 소스별로 고르게 뽑아 사람이 정답을 붙인다.
   python label.py eval  [--model-version]  news_label 과 news_signal 을 맞춰 질문별 정확도·ECE·게이트 판정.
   python label.py eval --labels x.csv       news_label 대신 CSV 라벨로 평가 (LLM 대리 라벨 등, news_label 에 섞지 않는다).
+  ... eval --save                            결과를 news_eval 에 남긴다 (대시보드 'Laya 흐름' 패널).
 
 VM 에서는 signal-worker 컨테이너 안에서 돌린다 (DB 접속 env 가 이미 있다):
   docker compose -f docker-compose.prod.yml exec signal-worker python label.py label
@@ -22,6 +23,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import os
 import sys
 from typing import Any
 
@@ -225,11 +227,28 @@ def build_sets(rows: list[dict[str, Any]]) -> dict[str, tuple[list[list[float]],
     return sets
 
 
-def run_eval(conn, model_version: str, labels_csv: str | None = None) -> bool:
+def save_eval(conn, model_version: str, labels: str, reports: list[dict[str, Any]]) -> None:
+    """측정 결과를 news_eval 에 남긴다 (대시보드 'Laya 흐름' 패널이 읽는다). 한 번의 실행 = 같은 run_at."""
+    with conn.transaction():
+        run_at = conn.execute("SELECT now() AS t").fetchone()["t"]
+        for r in reports:
+            conn.execute(
+                """
+                INSERT INTO news_eval (run_at, model_version, labels, field, n, acc, baseline,
+                                       ece_raw, ece_cal, temperature, passed)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (run_at, model_version, labels, r["field"], r["n"], r["acc"], r["baseline"],
+                 r["ece_raw"], r["ece_cal"], r["T"], r["passed"]),
+            )
+
+
+def run_eval(conn, model_version: str, labels_csv: str | None = None, save: bool = False) -> bool:
     rows = load_csv_rows(conn, model_version, labels_csv) if labels_csv else load_eval_rows(conn, model_version)
     sets = build_sets(rows)
     print(f"[평가] model_version={model_version} labels={labels_csv or 'news_label'}")
     passed = {}
+    reports = []
     for field, (probs, y) in sets.items():
         if not y:
             print(f"  {field:<10} 라벨 없음")
@@ -239,8 +258,12 @@ def run_eval(conn, model_version: str, labels_csv: str | None = None) -> bool:
         ci = 1.96 * math.sqrt(r["acc"] * (1 - r["acc"]) / r["n"])
         cal = "-" if r["ece_cal"] is None else f"{r['ece_cal']:.3f} (T={r['T']:.2f})"
         passed[field] = gate(r)
+        reports.append({**r, "passed": passed[field]})
         print(f"  {field:<10} n={r['n']:<4} acc={r['acc']:.3f}±{ci:.3f} baseline={r['baseline']:.3f} "
               f"ece={r['ece_raw']:.3f} ece_cal={cal}  {'PASS' if passed[field] else 'FAIL'}")
+    if save and reports:
+        save_eval(conn, model_version, os.path.basename(labels_csv) if labels_csv else "news_label", reports)
+        print("[저장] news_eval")
     go = passed["relevance"] and passed["sentiment"]
     print(f"[M4 진행] {'가능' if go else '불가'}"
           + ("" if passed["event_type"] else "  (event_type 미달: 전략에서 event 피처 제외)"))
@@ -252,6 +275,7 @@ def main() -> None:
     ap.add_argument("cmd", choices=["label", "eval"])
     ap.add_argument("--n", type=int, default=150, help="label: 이번에 볼 쌍 수")
     ap.add_argument("--model-version", help="기본: 가장 최근에 쓰인 model_version")
+    ap.add_argument("--save", action="store_true", help="eval: 결과를 news_eval 에 남긴다 (대시보드에 표시)")
     ap.add_argument("--labels", help="eval: news_label 대신 이 CSV 의 라벨로 평가 (article_id,symbol,relevance,sentiment,event_type)")
     args = ap.parse_args()
     with psycopg.connect(dsn_from_env(), autocommit=True, row_factory=dict_row) as conn:
@@ -261,7 +285,7 @@ def main() -> None:
         if args.cmd == "label":
             run_label(conn, mv, args.n)
         else:
-            sys.exit(0 if run_eval(conn, mv, args.labels) else 1)
+            sys.exit(0 if run_eval(conn, mv, args.labels, args.save) else 1)
 
 
 if __name__ == "__main__":

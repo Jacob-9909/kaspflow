@@ -56,7 +56,7 @@ class TestNewsApi(unittest.TestCase):
 
     def setUp(self):
         with self.psycopg.connect(DB_URL, autocommit=True) as c:
-            c.execute("TRUNCATE news_label, news_signal, news_raw, ohlc_1m")
+            c.execute("TRUNCATE news_eval, news_label, news_signal, news_raw, ohlc_1m")
             for i in range(8 * 60):
                 c.execute(
                     "INSERT INTO ohlc_1m (symbol, window_start, open, high, low, close, volume, trade_count) "
@@ -98,6 +98,25 @@ class TestNewsApi(unittest.TestCase):
         self.assertEqual(h["status"], "ok")
         self.assertLess(h["age_minutes"], 5)
         self.assertEqual((h["articles_24h"], h["signals_24h"], h["model_version"]), (2, 2, MV))
+
+    # -- /news/pipeline --
+    def test_pipeline_counts_stages_distribution_and_latest_eval(self):
+        now = datetime.now(timezone.utc)
+        self.add_signal("p1", now - timedelta(hours=1), pos=0.7, neu=0.2, neg=0.1, event="macro")
+        self.add_signal("p1", now - timedelta(hours=1), symbol="ETHUSDT", pos=0.1, neu=0.2, neg=0.7)
+        self.add_signal("p2", now - timedelta(hours=2), pos=0.2, neu=0.6, neg=0.2)
+        with self.psycopg.connect(DB_URL, autocommit=True) as c:  # 매칭 없는(신호 없는) 기사 1건
+            c.execute("INSERT INTO news_raw (article_id, source, url, title, collected_at) "
+                      "VALUES ('drop', 'decrypt', 'https://x.test/d', 'd', now())")
+            for t, acc in (("2026-01-01", 0.1), ("2026-01-02", 0.67)):
+                c.execute("INSERT INTO news_eval (run_at, model_version, labels, field, n, acc, baseline, ece_raw, passed) "
+                          "VALUES (%s, %s, 'x.csv', 'sentiment', 150, %s, 0.38, 0.1, false)", (t, MV, acc))
+        b = self.client.get("/news/pipeline", params={"hours": 24}).json()
+        self.assertEqual((b["collected"], b["with_signal"], b["dropped"]), (3, 2, 1))
+        btc = next(s for s in b["symbols"] if s["symbol"] == SYMBOL)
+        self.assertEqual((btc["n"], btc["positive"], btc["neutral"], btc["negative"], btc["fresh"]), (2, 1, 1, 0, 2))
+        self.assertEqual([(e["field"], e["acc"]) for e in b["eval"]], [("sentiment", 0.67)])
+        self.assertEqual(b["strategy_defaults"]["use_rel"], 0)
 
     # -- /news --
     def test_news_list_newest_first_with_sentiment_and_filters(self):
@@ -189,7 +208,7 @@ class TestNewsApi(unittest.TestCase):
         with self.psycopg.connect(DB_URL, autocommit=True) as c:
             c.execute("DROP TABLE news_label, news_signal, news_raw")
         try:
-            for path, params in (("/news", {}), ("/news/health", {}), ("/news/score", {"symbol": SYMBOL}),
+            for path, params in (("/news", {}), ("/news/health", {}), ("/news/pipeline", {}), ("/news/score", {"symbol": SYMBOL}),
                                  ("/features", {"symbol": SYMBOL}),
                                  ("/backtest", {"symbol": SYMBOL, "interval": "15m", "strategy": "news_sentiment"})):
                 with self.subTest(path=path):
