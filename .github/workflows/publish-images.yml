@@ -44,11 +44,11 @@ jobs:
             context: ./producer
           - name: news-collector
             context: ./news-collector
-          # signal-worker: 기본은 저장 전용(INSTALL_LAYA=0, M2). Laya 를 켜는 M3 에서 1 로 바꾼다
-          # (PyTorch CPU + laya 포함, 이미지가 커지고 QEMU arm64 빌드가 느려질 수 있다).
+          # signal-worker: M3 부터 Laya 포함(PyTorch CPU, ~1.6GB). 분류 여부는 VM .env 의 LAYA_ENABLED 로 켠다
+          # (이미지에 Laya 가 있어도 LAYA_ENABLED=false 면 저장 전용으로 돈다).
           - name: signal-worker
             context: ./signal-worker
-            build_args: INSTALL_LAYA=0
+            build_args: INSTALL_LAYA=1
           - name: spark
             context: ./spark
 
