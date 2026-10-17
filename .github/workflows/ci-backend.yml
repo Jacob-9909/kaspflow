@@ -5,6 +5,7 @@
 #   - main 으로의 PR, 또는 main 에 push 될 때
 #   - backend/ 또는 producer/ 경로가 바뀐 경우에만 (paths 필터)
 # 무엇을 하나:
+#   0) news-collector / signal-worker: 유닛 테스트 + import 스모크 (아래 steps 참고)
 #   1) backend: 의존성 설치 후 app 모듈이 import 되는지 확인 (스모크 테스트)
 #      -> FastAPI 앱이 문법/의존성 오류 없이 로드되는지 검증.
 #      -> DB 연결 풀은 open=False 라 import 시점에 실제 접속하지 않으므로 CI에서 안전.
@@ -21,6 +22,9 @@ on:
     paths:
       - "backend/**"
       - "producer/**"
+      - "news-collector/**"
+      - "signal-worker/**"
+      - "db/news.sql"
       - "spark/**"
       - ".github/workflows/ci-backend.yml"
   pull_request:
@@ -28,12 +32,30 @@ on:
     paths:
       - "backend/**"
       - "producer/**"
+      - "news-collector/**"
+      - "signal-worker/**"
+      - "db/news.sql"
       - "spark/**"
       - ".github/workflows/ci-backend.yml"
 
 jobs:
   backend:
     runs-on: ubuntu-latest
+    # 뉴스 테이블(db/news.sql)을 쓰는 테스트(signal-worker, backend)용 일회성 Postgres
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - name: 코드 체크아웃
         uses: actions/checkout@v4
@@ -45,7 +67,8 @@ jobs:
           cache: "pip"
 
       - name: backend 의존성 설치
-        run: pip install -r backend/requirements.txt
+        # httpx 는 테스트 전용 (FastAPI TestClient). 운영 이미지(requirements.txt)에는 넣지 않는다.
+        run: pip install -r backend/requirements.txt httpx==0.27.2
 
       # FastAPI 앱이 import 되는지 확인 (import 만으로 DB 접속하지 않음).
       - name: backend import 스모크 테스트
@@ -65,6 +88,30 @@ jobs:
       - name: producer import 스모크 테스트
         working-directory: producer
         run: python -c "import main; print('producer main import OK')"
+
+      - name: news-collector 의존성 설치
+        run: pip install -r news-collector/requirements.txt
+
+      # 정규화/중복 억제/조건부 GET 로직 유닛 테스트 (Kafka·네트워크 불필요, HTTP 는 MockTransport)
+      - name: news-collector 유닛 테스트
+        working-directory: news-collector
+        run: python -m unittest discover -s tests -v
+
+      - name: news-collector import 스모크 테스트
+        working-directory: news-collector
+        run: python -c "import main; print('news-collector main import OK')"
+
+      - name: signal-worker 의존성 설치
+        run: pip install -r signal-worker/requirements.txt
+
+      # 종목 매칭·질문 스키마·저장/분류 흐름 (가짜 분류기 + 위 Postgres 서비스, Laya 모델은 쓰지 않음)
+      - name: signal-worker 유닛 테스트
+        working-directory: signal-worker
+        run: python -m unittest discover -s tests -v
+
+      - name: signal-worker import 스모크 테스트
+        working-directory: signal-worker
+        run: python -c "import main; print('signal-worker main import OK')"
 
       # spark 잡은 pyspark 런타임이 무거우므로 문법 컴파일만 확인.
       - name: spark 잡 문법 체크

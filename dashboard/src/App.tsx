@@ -11,6 +11,8 @@
  *      차트를 왼쪽 끝까지 스크롤하면 과거 구간을 앞에 이어 붙인다(loadOlder -> prependOlder).
  *   6. 백테스트를 켜면 /backtest 결과(매수/매도 마커, 성과 지표)를 함께 불러와
  *      차트에 마커를 찍고 BacktestPanel 에 결과를 보여준다.
+ *   7. 뉴스: /news 의 신호를 봉마다 감정 색 점으로 찍고(누르면 그 봉의 기사 목록), 차트 아래에 news_score 선을 그린다.
+ *      뉴스 테이블이 없거나 수집 전이면(백엔드 503) 뉴스 기능만 조용히 숨긴다.
  *
  * [읽는 순서 추천]
  *   App() 안의 useEffect 2개 -> 파생값(latest/first/change) -> return JSX
@@ -23,14 +25,22 @@ import {
   fetchIntervals,
   fetchBacktest,
   fetchBacktestStrategies,
+  fetchNews,
+  fetchNewsHealth,
+  fetchNewsScore,
   type BacktestConfig,
   type BacktestResult,
   type Candle,
+  type NewsHealth,
+  type NewsItem,
+  type NewsScorePoint,
   type StrategyInfo,
 } from "./api";
 import { mergeTail, prependOlder, stepMs } from "./candles";
 import { BacktestPanel } from "./components/BacktestPanel";
-import { CandleChart } from "./components/CandleChart";
+import { CandleChart, groupNewsByBar } from "./components/CandleChart";
+import { NewsList } from "./components/NewsList";
+import { NewsScoreChart } from "./components/NewsScoreChart";
 import { SymbolSelector } from "./components/SymbolSelector";
 
 // 폴링 주기(ms). 백엔드/DB 갱신 주기(Spark 5초 트리거)와 맞췄다.
@@ -47,6 +57,10 @@ const OLDER_CHUNK = 1000;
 
 // 메모리/렌더 보호용: 이만큼 불러오면 더는 과거를 이어 붙이지 않는다.
 const MAX_LOADED = 20000;
+
+// 뉴스는 천천히 바뀌므로 시세보다 드물게 갱신한다.
+const NEWS_REFRESH_MS = 30000;
+const NEWS_SCORE_REFRESH_MS = 15000;
 
 // 숫자를 보기 좋게(천단위 콤마) 표시
 const fmt = (n: number, digits = 2) =>
@@ -101,6 +115,13 @@ export default function App() {
   const [btResult, setBtResult] = useState<BacktestResult | null>(null);
   const [btError, setBtError] = useState<string | null>(null);
   const [btLoading, setBtLoading] = useState(false);
+  // 뉴스: 켜짐 여부, 신호(null = 사용 불가), news_score 선, 수집 상태, 차트에서 누른 봉, 메인 차트의 보이는 시간 구간
+  const [newsOn, setNewsOn] = useState(true);
+  const [news, setNews] = useState<NewsItem[] | null>(null);
+  const [newsScore, setNewsScore] = useState<NewsScorePoint[] | null>(null);
+  const [newsHealth, setNewsHealth] = useState<NewsHealth | null>(null);
+  const [pickedBar, setPickedBar] = useState<number | null>(null);
+  const [timeRange, setTimeRange] = useState<{ from: number; to: number } | null>(null);
   // 상대시각("N초 전")을 1초마다 다시 그리기 위한 틱
   const [, setTick] = useState(0);
 
@@ -132,6 +153,7 @@ export default function App() {
         stopLossPct: null,
         takeProfitPct: null,
         trailingStopPct: null,
+        fill: "auto",
         params: first.params,
       });
     });
@@ -287,6 +309,56 @@ export default function App() {
     };
   }, [selected, interval, btOn, btConfig]);
 
+  // 뉴스 신호: 30초마다 갱신. 사용할 수 없으면(null) 뉴스 UI 를 숨긴다.
+  useEffect(() => {
+    setPickedBar(null);
+    setNews(null);
+    if (!selected || !newsOn) return;
+    let cancelled = false;
+    const run = () =>
+      fetchNews(selected).then((items) => {
+        if (!cancelled) setNews(items);
+      });
+    run();
+    const timer = window.setInterval(run, NEWS_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [selected, interval, newsOn]);
+
+  // news_score 선: 차트에 불러온 봉 수만큼 (백엔드 상한 5000). 과거를 더 불러오면 다음 갱신에 따라온다.
+  useEffect(() => {
+    setNewsScore(null);
+    if (!selected || !newsOn) return;
+    let cancelled = false;
+    const run = () =>
+      fetchNewsScore(selected, interval, Math.max(candlesRef.current.length, initialLimit)).then((series) => {
+        if (!cancelled) setNewsScore(series);
+      });
+    run();
+    const timer = window.setInterval(run, NEWS_SCORE_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [selected, interval, newsOn, initialLimit]);
+
+  // 수집 상태(마지막 수집 시각): 수집이 멈추면 경고로 보여 준다.
+  useEffect(() => {
+    let cancelled = false;
+    const run = () =>
+      fetchNewsHealth().then((h) => {
+        if (!cancelled) setNewsHealth(h);
+      });
+    run();
+    const timer = window.setInterval(run, NEWS_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
   // 3) 상대시각 라벨을 1초마다 갱신
   useEffect(() => {
     const t = window.setInterval(() => setTick((n) => n + 1), 1000);
@@ -305,6 +377,13 @@ export default function App() {
 
   // 라이브 상태: 마지막 갱신이 15초 이내면 "실시간"
   const isLive = updatedAt !== null && Date.now() - updatedAt < 15000;
+
+  // 뉴스: 선택한 봉의 기사 / 없으면 최근 기사
+  const stepMsNow = stepMs(interval);
+  const newsByBar = news && stepMsNow ? groupNewsByBar(news, stepMsNow) : null;
+  const pickedNews = pickedBar !== null && newsByBar ? (newsByBar.get(pickedBar) ?? []) : null;
+  const newsShown = newsOn ? news : null; // null = 사용 불가/꺼짐
+  const newsUsable = newsShown !== null;
 
   // 다른 심볼/간격의 이전 결과가 잠깐 남아 있어도 마커가 엉뚱한 차트에 찍히지 않게 걸러낸다.
   const btShown =
@@ -326,6 +405,15 @@ export default function App() {
           <span className={`live__dot${isLive ? "" : " live__dot--stale"}`} />
           {isLive ? "실시간" : "연결 대기"}
           {updatedAt && <span style={{ color: "var(--muted)" }}>· {ago(updatedAt)}</span>}
+          {newsHealth && newsHealth.status !== "empty" && (
+            <span
+              className={newsHealth.status === "stale" ? "news-health news-health--stale" : "news-health"}
+              title={`24시간 기사 ${newsHealth.articles_24h}건 · 신호 ${newsHealth.signals_24h}건`}
+            >
+              · 뉴스 {newsHealth.age_minutes === null ? "-" : `${Math.round(newsHealth.age_minutes)}분 전`}
+              {newsHealth.status === "stale" && " ⚠ 수집 지연"}
+            </span>
+          )}
         </span>
       </header>
 
@@ -348,6 +436,20 @@ export default function App() {
             ))}
           </div>
         </div>
+        {news !== null || !newsOn ? (
+          <div className="toolbar__group">
+            <span className="toolbar__label">뉴스</span>
+            <div className="symbol-selector">
+              <button
+                className={newsOn ? "chip chip--sm chip--active" : "chip chip--sm"}
+                onClick={() => setNewsOn((v) => !v)}
+                title="차트에 뉴스 점과 news_score 선을 표시"
+              >
+                {newsOn ? "표시 중" : "숨김"}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {error && <p className="error">⚠️ 데이터를 불러오지 못했습니다: {error}</p>}
@@ -388,7 +490,24 @@ export default function App() {
           </div>
 
           <div className="chart-card">
-            <CandleChart candles={candles} markers={btShown?.markers} viewKey={viewKey} onNeedOlder={loadOlder} />
+            <CandleChart
+              candles={candles}
+              markers={btShown?.markers}
+              news={newsShown ?? undefined}
+              stepMs={stepMsNow}
+              onBarClick={newsUsable ? setPickedBar : undefined}
+              onVisibleTimeRange={newsUsable ? setTimeRange : undefined}
+              viewKey={viewKey}
+              onNeedOlder={loadOlder}
+            />
+            {newsUsable && newsScore && newsScore.length > 0 && (
+              <>
+                <div className="chart-status chart-status--sub">
+                  <span>news_score (−1 악재 ~ +1 호재 · 봉 마감 시점까지 수집된 기사의 감쇠 가중 평균)</span>
+                </div>
+                <NewsScoreChart series={newsScore} range={timeRange} viewKey={viewKey} />
+              </>
+            )}
             <div className="chart-status">
               <span>
                 불러온 {candles.length.toLocaleString()}봉
@@ -403,6 +522,18 @@ export default function App() {
               </span>
             </div>
           </div>
+
+          {newsShown !== null && (
+            <NewsList
+              items={pickedNews !== null ? pickedNews : newsShown.slice(0, 10)}
+              title={pickedNews !== null ? "선택한 봉의 뉴스" : "최근 뉴스"}
+              hint={
+                pickedNews !== null
+                  ? "차트의 다른 봉을 누르면 바뀝니다"
+                  : "차트의 ● 점(봉)을 누르면 그 봉에 수집된 기사를 보여 줍니다 · 점 색: 호재/중립/악재"
+              }
+            />
+          )}
 
           {strategies.length > 0 && btConfig && (
             <BacktestPanel

@@ -15,6 +15,10 @@ Backend API (FastAPI): PostgreSQL 조회 -> JSON 제공
   GET /ohlc?symbol=... : 특정 심볼의 1분봉 최근 N개
   GET /backtest?symbol=...&interval=5m&strategy=macd : 전략 백테스트 + 매수/매도 마커
   GET /backtest/strategies : 전략 목록/기본 파라미터
+  GET /news?symbol=...     : 최근 뉴스 신호 (제목·링크·감정 확률)
+  GET /news/health         : 마지막 수집 시각과 경과 시간 (수집 중단 감지)
+  GET /news/score?symbol=...&interval=15m : 봉별 news_score 선 (대시보드 보조 차트)
+  GET /features?symbol=...&interval=15m   : 봉별 기술 지표 + 뉴스 피처 (JSON/CSV 내보내기)
 
 [확인 방법]
   컨테이너가 뜨면 브라우저에서 http://localhost:8000/docs 접속
@@ -22,15 +26,20 @@ Backend API (FastAPI): PostgreSQL 조회 -> JSON 제공
 """
 import json
 import os
-from contextlib import asynccontextmanager
-from datetime import datetime
+from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime, timedelta
 
+import pandas as pd
 import psycopg
+import psycopg.errors
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Response
 
 import backtest
+import features
+import news_features
+import news_queries
 
 # ------------------------------------------------------------
 # DB 접속 정보 (docker-compose environment 로 주입)
@@ -91,6 +100,7 @@ INTERVALS = {
     "1m": "1 minute",
     "5m": "5 minutes",
     "15m": "15 minutes",
+    "30m": "30 minutes",
     "1h": "1 hour",
     "4h": "4 hours",
     "1d": "1 day",
@@ -242,7 +252,7 @@ def get_ohlc(
 # 백테스트 (midas-touch 전략 이식, 로직은 backtest.py)
 # ------------------------------------------------------------
 # 분 단위 길이: 샤프 비율 연환산에 사용
-INTERVAL_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+INTERVAL_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
 
 # 공개 엔드포인트라 연산량을 제한한다 (복합 전략은 하위 5개 전략을 돌린다).
 BACKTEST_MAX_BARS = 5000
@@ -254,7 +264,8 @@ def list_backtest_strategies():
     """전략 목록과 기본 파라미터/리스크 설정. 대시보드가 입력 폼을 그리는 데 쓴다."""
     return {
         "strategies": [
-            {"id": sid, "label": label, "params": backtest.DEFAULT_PARAMS[sid]}
+            {"id": sid, "label": label, "params": backtest.DEFAULT_PARAMS[sid],
+             "requires_news": sid == backtest.NEWS_STRATEGY}
             for sid, label in backtest.STRATEGY_LABELS.items()
         ],
         "risk_defaults": backtest.DEFAULT_RISK,
@@ -265,8 +276,8 @@ def list_backtest_strategies():
 @app.get("/backtest")
 def run_backtest_endpoint(
     symbol: str = Query(..., description="심볼 (예: BTCUSDT)"),
-    interval: str = Query("5m", description="전략을 평가할 봉 간격: 1m/5m/15m/1h/4h/1d"),
-    strategy: str = Query("sma_crossover", description="sma_crossover/macd/rsi/bollinger/obv/combined"),
+    interval: str = Query("5m", description="전략을 평가할 봉 간격: 1m/5m/15m/30m/1h/4h/1d"),
+    strategy: str = Query("sma_crossover", description="sma_crossover/macd/rsi/bollinger/obv/combined/news_sentiment"),
     limit: int = Query(500, ge=10, le=BACKTEST_MAX_BARS, description="백테스트에 쓸 최근 봉 개수"),
     initial_capital: float = Query(10000, gt=0, le=1e12, description="초기 자본 (USDT)"),
     fee_bps: float = Query(10, ge=0, le=100, description="편도 수수료 (bp, 10 = 0.10%)"),
@@ -274,28 +285,38 @@ def run_backtest_endpoint(
     take_profit_pct: float | None = Query(None, gt=0, lt=1, description="진입가 대비 익절 비율"),
     trailing_stop_pct: float | None = Query(None, gt=0, lt=1, description="보유 중 고점 대비 추격 손절 비율"),
     params: str | None = Query(None, max_length=PARAMS_MAX_LEN, description='전략 파라미터 JSON (예: {"short_window":5,"long_window":20})'),
+    fill: str | None = Query(None, description="체결 가격: close(신호 봉 종가) / next_open(다음 봉 시가, 누수 방지). 기본: news_sentiment 는 next_open, 나머지는 close"),
+    compare: bool = Query(False, description="true 면 같은 기간·비용의 복합 전략·단순 보유 성과를 baselines 로 함께 반환"),
+    model_version: str | None = Query(None, description="news_sentiment 가 쓸 뉴스 모델 버전 (기본: 가장 최근에 쓰인 버전)"),
 ):
     """선택한 봉 간격·전략으로 백테스트를 돌려 성과, 거래 목록, 차트용 매수/매도 마커를 반환.
 
     - 봉은 /ohlc 와 같은 규칙으로 가져오므로 같은 interval/limit 이면 차트의 봉과 시각이 일치한다.
     - 아직 집계 중인 마지막 봉은 시뮬레이션에서 제외한다 (신호 리페인팅 방지).
-    - 체결은 신호 봉의 종가 기준이며 슬리피지는 반영하지 않는다.
+    - 체결은 기본적으로 신호 봉의 종가 기준이며(fill=close) 슬리피지는 반영하지 않는다.
+      fill=next_open 이면 신호 봉 다음 봉의 시가로 체결한다. (news_sentiment 의 기본값)
+    - news_sentiment 일 때만 뉴스 신호를 조회한다 (뉴스 테이블이 없어도 다른 전략은 영향받지 않는다).
     """
+    if fill is None:
+        fill = "next_open" if strategy == backtest.NEWS_STRATEGY else "close"
+    if fill not in backtest.FILL_MODES:
+        raise HTTPException(status_code=400, detail=f"지원하지 않는 fill: {fill}")
     if interval not in INTERVALS:
         raise HTTPException(status_code=400, detail=f"지원하지 않는 interval: {interval}")
     if strategy not in backtest.STRATEGY_LABELS:
         raise HTTPException(status_code=400, detail=f"지원하지 않는 strategy: {strategy}")
 
-    overrides = None
-    if params:
-        try:
-            overrides = json.loads(params)
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="params 는 JSON 객체여야 합니다")
-        if not isinstance(overrides, dict):
-            raise HTTPException(status_code=400, detail="params 는 JSON 객체여야 합니다")
+    overrides = _parse_params(params)
 
     candles = _query_ohlc(symbol, interval, limit)
+    news = None
+    news_mv = None
+    if strategy == backtest.NEWS_STRATEGY:
+        try:
+            lookback = backtest.merge_params(strategy, overrides)["lookback_min"]
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        news, news_mv = _load_news(symbol, candles, lookback, model_version)
     try:
         result = backtest.run_backtest(
             candles,
@@ -309,8 +330,122 @@ def run_backtest_endpoint(
                 "trailing_stop_pct": trailing_stop_pct,
             },
             interval_minutes=INTERVAL_MINUTES[interval],
+            fill=fill,
+            news=news,
+            compare=compare,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    if "news" in result:
+        result["news"]["model_version"] = news_mv
 
     return {"symbol": symbol, "interval": interval, **result}
+
+
+# ------------------------------------------------------------
+# 뉴스 (docs/news-signal-design.md 6.4절)
+#   news_raw / news_signal 은 db/news.sql 로 따로 만든다. 테이블이 없으면 이 엔드포인트들만 503 을 내고
+#   시세·기존 백테스트는 영향받지 않는다.
+# ------------------------------------------------------------
+def _parse_params(params: str | None) -> dict | None:
+    if not params:
+        return None
+    try:
+        overrides = json.loads(params)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="params 는 JSON 객체여야 합니다")
+    if not isinstance(overrides, dict):
+        raise HTTPException(status_code=400, detail="params 는 JSON 객체여야 합니다")
+    return overrides
+
+
+@contextmanager
+def _news_conn():
+    """뉴스 테이블 조회용 연결. 테이블이 없으면 503(적용 안내)로 바꿔 준다."""
+    try:
+        with pool.connection() as conn:
+            yield conn
+    except psycopg.errors.UndefinedTable:
+        raise HTTPException(status_code=503, detail="뉴스 테이블이 없습니다. db/news.sql 을 먼저 적용하세요")
+
+
+def _load_news(symbol: str, candles: list[dict], lookback_min: int, model_version: str | None):
+    """백테스트/피처 계산에 쓸 뉴스 신호 (이 종목 + MARKET). 반환: (신호 목록, 사용한 model_version)."""
+    if not candles:
+        return [], None
+    since = candles[0]["window_start"] - timedelta(minutes=lookback_min)
+    with _news_conn() as conn:
+        mv = model_version or news_queries.latest_model_version(conn)
+        return news_queries.fetch_signals(conn, symbol, since, mv), mv
+
+
+@app.get("/news")
+def list_news(
+    symbol: str | None = Query(None, description="심볼 (예: BTCUSDT, 시장 전체는 MARKET). 비우면 전체"),
+    limit: int = Query(50, ge=1, le=200),
+    since: datetime | None = Query(None, description="이 시각(ISO8601) 이후 수집된 신호만"),
+    model_version: str | None = Query(None, description="기본: 가장 최근에 쓰인 모델 버전"),
+):
+    """최근 뉴스 신호(최신순): 제목·링크·소스와 관련도·감정 확률·이벤트 유형."""
+    with _news_conn() as conn:
+        rows = news_queries.recent_news(conn, symbol, limit, since, model_version)
+    return {"symbol": symbol, "count": len(rows), "news": rows}
+
+
+@app.get("/news/health")
+def news_health():
+    """뉴스 수집 상태: 마지막 collected_at 과 경과 시간. status=stale 이면 수집 중단을 의심한다."""
+    with _news_conn() as conn:
+        return news_queries.health(conn)
+
+
+def _bars_with_news(symbol, interval, limit, params, model_version):
+    """차트와 같은 규칙으로 봉을 가져오고 봉별 뉴스 피처를 계산한다. 반환: (봉, 피처, 사용 파라미터, 모델 버전)."""
+    if interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail=f"지원하지 않는 interval: {interval}")
+    try:
+        p = news_features.validate_news_params(_parse_params(params))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    candles = _query_ohlc(symbol, interval, limit)
+    news, mv = _load_news(symbol, candles, p["lookback_min"], model_version)
+    times = [backtest._to_epoch(c["window_start"]) for c in candles]
+    feats = news_features.news_features(times, INTERVAL_MINUTES[interval], news, p)
+    return candles, times, feats, p, mv
+
+
+@app.get("/news/score")
+def news_score_series(
+    symbol: str = Query(..., description="심볼 (예: BTCUSDT)"),
+    interval: str = Query("15m", description="봉 간격: 1m/5m/15m/30m/1h/4h/1d"),
+    limit: int = Query(500, ge=10, le=BACKTEST_MAX_BARS),
+    params: str | None = Query(None, max_length=PARAMS_MAX_LEN, description="news_sentiment 와 같은 피처 파라미터 JSON"),
+    model_version: str | None = Query(None),
+):
+    """봉별 news_score / news_weight / news_count (차트 아래 보조 선). 마지막 진행 중인 봉도 포함한다."""
+    candles, times, feats, p, mv = _bars_with_news(symbol, interval, limit, params, model_version)
+    series = [
+        {"time": t, "score": round(float(feats["score"][i]), 6), "weight": round(float(feats["weight"][i]), 6),
+         "count": int(feats["count"][i])}
+        for i, t in enumerate(times)
+    ]
+    return {"symbol": symbol, "interval": interval, "model_version": mv, "params_used": p, "series": series}
+
+
+@app.get("/features")
+def feature_table(
+    symbol: str = Query(..., description="심볼 (예: BTCUSDT)"),
+    interval: str = Query("15m", description="봉 간격: 1m/5m/15m/30m/1h/4h/1d"),
+    limit: int = Query(500, ge=10, le=BACKTEST_MAX_BARS),
+    params: str | None = Query(None, max_length=PARAMS_MAX_LEN, description="뉴스 피처 파라미터 JSON"),
+    model_version: str | None = Query(None),
+    format: str = Query("json", pattern="^(json|csv)$", description="json | csv (오프라인 ML 학습용 내보내기)"),
+):
+    """봉별 OHLCV + 기술 지표 + 뉴스 피처. 라벨은 없다 (features.py 의 주의 참고)."""
+    candles, _times, feats, p, mv = _bars_with_news(symbol, interval, limit, params, model_version)
+    rows = features.build_feature_rows(candles, feats)
+    if format == "csv":
+        csv = pd.DataFrame(rows).to_csv(index=False)
+        return Response(content=csv, media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{symbol}_{interval}_features.csv"'})
+    return {"symbol": symbol, "interval": interval, "model_version": mv, "params_used": p, "rows": rows}

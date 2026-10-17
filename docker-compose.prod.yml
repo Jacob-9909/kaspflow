@@ -17,6 +17,7 @@
 #   IMAGE_TAG=latest                          (또는 sha-xxxxxxx)
 #   KAFKA_TOPIC=crypto-trades
 #   SYMBOLS=BTCUSDT,ETHUSDT,XRPUSDT
+#   (선택) NEWS_TOPIC / NEWS_POLL_SECONDS / NEWS_FEEDS  — news-collector, 기본값 있음
 #   POSTGRES_HOST=host.docker.internal
 #   POSTGRES_PORT=5432
 #   POSTGRES_DB=crypto
@@ -89,6 +90,58 @@ services:
     mem_limit: 300m
 
   # ----------------------------------------------------------
+  # News Collector — 코인 매체 RSS 폴링 -> Kafka(news-raw). DB 에 쓰지 않는다(저장은 signal-worker, M2).
+  #   설계: docs/news-signal-design.md. 피드 목록/주기는 .env 의 NEWS_FEEDS / NEWS_POLL_SECONDS 로 바꾼다.
+  # ----------------------------------------------------------
+  news-collector:
+    image: ${IMAGE_PREFIX}-news-collector:${IMAGE_TAG:-latest}
+    container_name: news-collector
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      NEWS_TOPIC: ${NEWS_TOPIC:-news-raw}
+      NEWS_POLL_SECONDS: ${NEWS_POLL_SECONDS:-300}
+      NEWS_FEEDS: ${NEWS_FEEDS:-}
+    mem_limit: 200m
+
+  # ----------------------------------------------------------
+  # Signal Worker — Kafka(news-raw) -> 호스트 PostgreSQL(news_raw / news_signal).
+  #   M2(기본): LAYA_ENABLED=false 저장 전용. 모델 없음 -> 메모리 300m 로 충분.
+  #   M3: .env 에서 LAYA_ENABLED=true, SIGNAL_WORKER_MEM_LIMIT=3g 로 바꾸고 Laya 포함 이미지를 쓴다.
+  #       (맥 실측: 모델 로드 순간 최대 ~2.8GB, 상주 ~2.1GB -> 설계서의 2.5GB 상한은 모자랄 수 있다.
+  #        VM 에서 docker stats 로 실측해 조정. compose 파일이 아니라 .env 로 바꾼다.)
+  #   선행: db/news.sql 을 호스트 PG 에 적용해 둘 것 (sudo -u postgres psql -d crypto -f db/news.sql).
+  # ----------------------------------------------------------
+  signal-worker:
+    image: ${IMAGE_PREFIX}-signal-worker:${IMAGE_TAG:-latest}
+    container_name: signal-worker
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      NEWS_TOPIC: ${NEWS_TOPIC:-news-raw}
+      POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-crypto}
+      POSTGRES_USER: ${POSTGRES_USER:-crypto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 설정하세요}
+      LAYA_ENABLED: ${LAYA_ENABLED:-false}
+      LAYA_CHECKPOINT: ${LAYA_CHECKPOINT:-convaiinnovations/laya}
+      LAYA_THREADS: ${LAYA_THREADS:-2}
+      LAYA_MARKET_MIN_P: ${LAYA_MARKET_MIN_P:-0.9}
+    volumes:
+      # Hugging Face 캐시: 재배포마다 808MB 를 다시 받지 않게 한다
+      - hf-cache:/hf-cache
+    mem_limit: ${SIGNAL_WORKER_MEM_LIMIT:-300m}
+
+  # ----------------------------------------------------------
   # Spark — GHCR 이미지. 호스트 PostgreSQL(host.docker.internal)로 저장.
   #   메모리 상한 + driver memory 로 호스트 보호.
   # ----------------------------------------------------------
@@ -146,3 +199,6 @@ services:
     ports:
       - "8501:80"
     mem_limit: 200m
+
+volumes:
+  hf-cache:

@@ -159,6 +159,85 @@ class TestRunBacktest(unittest.TestCase):
                 self.assertIn("sharpe_ratio", res["metrics"])
 
 
+class TestNextOpenFill(unittest.TestCase):
+    """fill="next_open": 판단은 봉 종가, 체결은 다음 봉 시가."""
+
+    @staticmethod
+    def sim_no(closes, opens, position, capital=1_000.0, risk=None):
+        return bt.simulate(
+            np.array(closes, dtype=float), np.array(position, dtype=float), list(range(len(closes))),
+            capital, bt.merge_risk(risk or {"fee_bps": 0}),
+            opens=np.array(opens, dtype=float), fill="next_open",
+        )
+
+    def test_signal_fills_at_next_bar_open(self):
+        # i=1 에서 매수 신호 -> i=2 시가 111 체결, i=3 에서 매도 신호 -> i=4 시가 131 체결
+        out = self.sim_no([100, 100, 110, 120, 130], [100, 101, 111, 121, 131], [0, 1, 1, -1, -1])
+        self.assertEqual(len(out["trades"]), 1)
+        t = out["trades"][0]
+        self.assertEqual((t["entry_price"], t["exit_price"]), (111.0, 131.0))
+        self.assertEqual((t["entry_time"], t["exit_time"], t["bars_held"]), (2, 4, 2))
+        self.assertEqual([(e["side"], e["time"], e["price"]) for e in out["events"]],
+                         [("buy", 2, 111.0), ("sell", 4, 131.0)])
+        self.assertIsNone(out["pending_order"])
+
+    def test_fill_price_differs_from_close_mode(self):
+        closes, opens, pos = [100, 100, 110, 120, 130], [100, 101, 111, 121, 131], [0, 1, 1, -1, -1]
+        at_close = sim(closes, pos)
+        at_open = self.sim_no(closes, opens, pos)
+        self.assertEqual(at_close["trades"][0]["entry_price"], 100.0)  # 신호 봉 종가
+        self.assertEqual(at_open["trades"][0]["entry_price"], 111.0)   # 다음 봉 시가
+
+    def test_order_on_last_bar_is_not_filled(self):
+        out = self.sim_no([100, 100, 100], [100, 100, 100], [0, 0, 1])
+        self.assertEqual(out["trades"], [])
+        self.assertIsNone(out["open_position"])
+        self.assertEqual(out["pending_order"], {"side": "buy", "reason": "signal", "signal_time": 2})
+
+    def test_stop_loss_is_judged_on_close_but_filled_at_next_open(self):
+        # i=1 신호 -> i=2 시가 100 진입. i=2 종가 92 (-8%) 로 -5% 손절 판정 -> i=3 시가 85 체결
+        out = self.sim_no([100, 100, 92, 95, 99], [100, 100, 100, 85, 90], [0, 1, 1, 1, 1],
+                          risk={"stop_loss_pct": 0.05, "fee_bps": 0})
+        t = out["trades"][0]
+        self.assertEqual(t["exit_reason"], "stop_loss")
+        self.assertEqual(t["exit_price"], 85.0)
+        self.assertAlmostEqual(t["pnl_pct"], -0.15, places=9)
+        self.assertIsNone(out["open_position"])  # 손절 뒤 재진입 없음
+        self.assertEqual(out["in_market"][-1], 0.0)
+
+    def test_equity_is_marked_at_close_on_fill_bar(self):
+        # 1,000 USDT, i=2 시가 100 에 10개 매수, i=2 종가 110 으로 평가
+        out = self.sim_no([100, 100, 110], [100, 100, 100], [0, 1, 1])
+        self.assertAlmostEqual(out["equity"][1], 1_000.0)
+        self.assertAlmostEqual(out["equity"][2], 1_100.0)
+        self.assertEqual(out["in_market"][2], 1.0)
+
+    def test_requires_opens(self):
+        with self.assertRaises(ValueError):
+            bt.simulate(np.array([1.0, 2.0]), np.array([0.0, 1.0]), [0, 1], 100.0,
+                        bt.merge_risk({}), fill="next_open")
+        with self.assertRaises(ValueError):
+            bt.simulate(np.array([1.0, 2.0]), np.array([0.0, 1.0]), [0, 1], 100.0,
+                        bt.merge_risk({}), opens=np.array([1.0]), fill="next_open")
+
+    def test_unknown_fill_rejected(self):
+        with self.assertRaises(ValueError):
+            bt.run_backtest(candles_from([1, 2, 3, 4]), "obv", fill="vwap")
+
+    def test_run_backtest_next_open_end_to_end(self):
+        closes = TestRunBacktest.CLOSES
+        res = bt.run_backtest(candles_from(closes), "sma_crossover", params=TestRunBacktest.SMA,
+                              risk={"fee_bps": 0}, fill="next_open")
+        base = bt.run_backtest(candles_from(closes), "sma_crossover", params=TestRunBacktest.SMA,
+                               risk={"fee_bps": 0})
+        self.assertEqual(res["fill"], "next_open")
+        self.assertEqual(base["fill"], "close")
+        json.dumps(res, allow_nan=False)
+        # 봉은 high=low=open=close 이므로, 체결 시각이 한 봉씩 뒤로 밀려야 한다
+        self.assertEqual([m["time"] - 60 for m in res["markers"]][: len(base["markers"])],
+                         [m["time"] for m in base["markers"]][: len(res["markers"])])
+
+
 class TestValidation(unittest.TestCase):
     def test_rejects_unknown_strategy(self):
         with self.assertRaises(ValueError):

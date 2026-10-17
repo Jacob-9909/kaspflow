@@ -15,9 +15,11 @@
   - 마지막 봉은 아직 집계 중일 수 있어(Spark 가 계속 upsert) 시뮬레이션에서 제외한다.
     제외하지 않으면 봉이 닫히기 전에 신호가 생겼다 사라지는 '리페인팅'이 생긴다.
 
-[체결 모델 (midas 와 동일)]
-  신호가 확정된 봉의 종가로 즉시 체결한다. 실제로는 슬리피지/다음 봉 시가 체결이
-  있으므로 결과는 다소 낙관적이다. 매수는 전액 투입(all-in), 포지션은 최대 1개(롱 온리).
+[체결 모델]
+  fill="close"(기본, midas 와 동일): 신호가 확정된 봉의 종가로 즉시 체결한다.
+  실제로는 슬리피지/다음 봉 시가 체결이 있으므로 결과는 다소 낙관적이다.
+  fill="next_open": 신호는 봉 종가에서 확정하고 체결은 다음 봉 시가에서 한다(누수 방지).
+  매수는 전액 투입(all-in), 포지션은 최대 1개(롱 온리).
 
 [순수 함수]
   DB/네트워크에 의존하지 않는다. (그래서 단위 테스트가 쉽다)
@@ -32,6 +34,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from news_features import NEWS_DEFAULT_PARAMS, news_features, news_stance, validate_news_params
+
 # ------------------------------------------------------------
 # 전략 메타데이터
 # ------------------------------------------------------------
@@ -42,6 +46,7 @@ STRATEGY_LABELS: dict[str, str] = {
     "bollinger": "볼린저 밴드",
     "obv": "OBV",
     "combined": "복합 전략",
+    "news_sentiment": "뉴스 감정",  # 뉴스 신호가 필요하다 (run_backtest 의 news 인자). news_features.py 참고
 }
 
 # midas-touch DEFAULT_PARAMS 와 동일한 전략 기본값
@@ -52,7 +57,12 @@ DEFAULT_PARAMS: dict[str, dict[str, float]] = {
     "bollinger": {"bol_window": 20},
     "obv": {"obv_window": 10},
     "combined": {},  # 하위 5개 전략의 기본 파라미터를 그대로 사용
+    "news_sentiment": dict(NEWS_DEFAULT_PARAMS),
 }
+
+NEWS_STRATEGY = "news_sentiment"
+# 거래가 이보다 적으면 결과가 우연일 수 있어 판단을 보류하라고 경고한다 (설계서 9절)
+MIN_TRADES_FOR_VERDICT = 30
 
 # 복합 전략: 하위 전략 '스탠스' 순강세표가 이 값 이상이면 진입, 이하(-)면 청산
 COMBINED_THRESHOLD = 3
@@ -77,6 +87,8 @@ def merge_params(strategy: str, overrides: dict[str, Any] | None) -> dict[str, f
     """전략 기본 파라미터에 사용자 값을 덮어쓰고 범위를 검증한다."""
     if strategy not in STRATEGY_LABELS:
         raise ValueError(f"지원하지 않는 전략: {strategy}")
+    if strategy == NEWS_STRATEGY:
+        return validate_news_params(overrides)  # 실수/음수 범위가 있어 기술 지표 전략과 검증 규칙이 다르다
     params = copy.deepcopy(DEFAULT_PARAMS[strategy])
     for key, value in (overrides or {}).items():
         if key not in params:
@@ -128,8 +140,10 @@ def required_bars(strategy: str, params: dict[str, float]) -> int:
         return int(params["bol_window"])
     if strategy == "obv":
         return int(params["obv_window"])
+    if strategy == NEWS_STRATEGY:
+        return 1  # 지표 워밍업이 없다 (뉴스가 있으면 첫 봉부터 신호 가능)
     # combined: 하위 전략 중 가장 긴 워밍업
-    return max(required_bars(s, DEFAULT_PARAMS[s]) for s in STRATEGY_LABELS if s != "combined")
+    return max(required_bars(s, DEFAULT_PARAMS[s]) for s in _SIGNAL_FUNCS)
 
 
 # ------------------------------------------------------------
@@ -214,7 +228,9 @@ _SIGNAL_FUNCS = {
 
 
 def compute_position(df: pd.DataFrame, strategy: str, params: dict[str, float]) -> pd.Series:
-    """전략별 스탠스(Position) 시리즈를 계산한다."""
+    """전략별 스탠스(Position) 시리즈를 계산한다. (news_sentiment 는 뉴스가 필요해 run_backtest 가 따로 만든다)"""
+    if strategy == NEWS_STRATEGY:
+        raise ValueError("news_sentiment 는 run_backtest(news=...) 로만 실행할 수 있습니다")
     if strategy == "combined":
         # 교차 신호는 순간적이라 '같은 봉 동시 교차'는 거의 없다. 대신 각 하위 전략의
         # 현재 스탠스를 다수결로 합산해 3표 이상 강세면 진입, 3표 이상 약세면 청산한다.
@@ -229,18 +245,38 @@ def compute_position(df: pd.DataFrame, strategy: str, params: dict[str, float]) 
 # ------------------------------------------------------------
 # 체결 시뮬레이션 (리스크·비용 오버레이)
 # ------------------------------------------------------------
+FILL_MODES = ("close", "next_open")
+
+
 def simulate(
     closes: np.ndarray,
     positions: np.ndarray,
     times: list[int],
     capital: float,
     risk: dict[str, float | None],
+    opens: np.ndarray | None = None,
+    fill: str = "close",
+    reasons: list[str | None] | None = None,
 ) -> dict[str, Any]:
     """신호 + 리스크·비용으로 체결을 시뮬레이션한다.
 
     리스크 청산(손절/익절/추격손절)은 신호 청산보다 우선한다. 리스크로 청산된 뒤에는
     스탠스가 새로 +1 로 바뀔 때까지 재진입하지 않는다(즉시 재매수 방지).
+
+    fill:
+      - "close"     : 신호가 확정된 봉 i 의 종가로 즉시 체결 (midas-touch 와 동일, 기본값).
+      - "next_open" : 판단은 봉 i 종가에서 하되, 체결은 봉 i+1 의 시가에서 한다. 손절·익절·추격
+                      '판정'은 close 모드와 같이 봉 종가 기준이고 체결 가격만 다음 봉 시가다.
+                      마지막 봉에서 낸 주문은 다음 봉이 없어 체결되지 않고 pending_order 로 보고한다.
+                      거래 시각(entry_time/exit_time)과 마커 시각은 '체결된 봉'의 시각이다.
+    reasons: 봉별 신호 청산 사유(없으면 "signal"). 예) news_sentiment 의 "news_expired".
     """
+    if fill not in FILL_MODES:
+        raise ValueError(f"fill 은 {'/'.join(FILL_MODES)} 중 하나여야 합니다")
+    next_open = fill == "next_open"
+    if next_open and (opens is None or len(opens) != len(closes)):
+        raise ValueError("fill=next_open 에는 closes 와 같은 길이의 opens 가 필요합니다")
+
     sl, tp, ts = risk.get("stop_loss_pct"), risk.get("take_profit_pct"), risk.get("trailing_stop_pct")
     fee = float(risk.get("fee_bps") or 0.0) / 10000.0
 
@@ -255,8 +291,53 @@ def simulate(
     equity[0] = cash
     trades: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
+    pending: tuple[str, str] | None = None  # next_open 모드의 대기 주문 (side, reason)
+
+    def do_exit(px: float, i: int, reason: str) -> None:
+        nonlocal cash, qty
+        net_entry = entry_px * (1 + fee)
+        net_exit = px * (1 - fee)
+        pnl_pct = (net_exit - net_entry) / net_entry if net_entry else 0.0
+        pnl_amount = qty * (net_exit - net_entry)
+        cash += qty * net_exit
+        trades.append({
+            "entry_time": times[entry_i],
+            "exit_time": times[i],
+            "entry_price": entry_px,
+            "exit_price": px,
+            "qty": qty,
+            "pnl_pct": pnl_pct,
+            "pnl_amount": pnl_amount,
+            "exit_reason": reason,
+            "bars_held": i - entry_i,
+        })
+        events.append({"time": times[i], "side": "sell", "price": px,
+                       "reason": reason, "pnl_pct": pnl_pct})
+        qty = 0.0
+
+    def do_entry(px: float, i: int) -> None:
+        nonlocal cash, qty, entry_px, peak_px, entry_i
+        buy_qty = cash / (px * (1 + fee))
+        if buy_qty > 0:
+            cash = max(cash - buy_qty * px * (1 + fee), 0.0)
+            qty = buy_qty
+            entry_px = peak_px = px
+            entry_i = i
+            events.append({"time": times[i], "side": "buy", "price": px,
+                           "reason": "signal", "pnl_pct": None})
 
     for i in range(1, n):
+        # 1) next_open: 직전 봉에서 낸 주문을 이번 봉 시가에 체결한다
+        if next_open and pending is not None:
+            side, reason = pending
+            pending = None
+            open_px = float(opens[i])
+            if side == "sell" and qty > 0:
+                do_exit(open_px, i, reason)
+            elif side == "buy" and qty == 0 and cash > 0:
+                do_entry(open_px, i)
+
+        # 2) 이번 봉 종가 기준으로 판단한다
         px = float(closes[i])
         exit_reason = None
 
@@ -271,37 +352,18 @@ def simulate(
             elif ts is not None and draw <= -ts:
                 exit_reason = "trailing_stop"
             elif positions[i] == -1 and positions[i - 1] >= 0:
-                exit_reason = "signal"
+                exit_reason = (reasons[i] if reasons is not None else None) or "signal"
 
         if qty > 0 and exit_reason is not None:
-            net_entry = entry_px * (1 + fee)
-            net_exit = px * (1 - fee)
-            pnl_pct = (net_exit - net_entry) / net_entry if net_entry else 0.0
-            pnl_amount = qty * (net_exit - net_entry)
-            cash += qty * net_exit
-            trades.append({
-                "entry_time": times[entry_i],
-                "exit_time": times[i],
-                "entry_price": entry_px,
-                "exit_price": px,
-                "qty": qty,
-                "pnl_pct": pnl_pct,
-                "pnl_amount": pnl_amount,
-                "exit_reason": exit_reason,
-                "bars_held": i - entry_i,
-            })
-            events.append({"time": times[i], "side": "sell", "price": px,
-                           "reason": exit_reason, "pnl_pct": pnl_pct})
-            qty = 0.0
+            if next_open:
+                pending = ("sell", exit_reason)
+            else:
+                do_exit(px, i, exit_reason)
         elif qty == 0 and positions[i] == 1 and positions[i - 1] <= 0 and cash > 0:
-            buy_qty = cash / (px * (1 + fee))
-            if buy_qty > 0:
-                cash = max(cash - buy_qty * px * (1 + fee), 0.0)
-                qty = buy_qty
-                entry_px = peak_px = px
-                entry_i = i
-                events.append({"time": times[i], "side": "buy", "price": px,
-                               "reason": "signal", "pnl_pct": None})
+            if next_open:
+                pending = ("buy", "signal")
+            else:
+                do_entry(px, i)
 
         equity[i] = cash + qty * px
         in_market[i] = 1.0 if qty > 0 else 0.0
@@ -315,8 +377,11 @@ def simulate(
             "qty": qty,
             "unrealized_pct": (last * (1 - fee)) / (entry_px * (1 + fee)) - 1,
         }
+    pending_order = None
+    if pending is not None:
+        pending_order = {"side": pending[0], "reason": pending[1], "signal_time": times[n - 1]}
     return {"equity": equity, "in_market": in_market, "trades": trades,
-            "events": events, "open_position": open_position}
+            "events": events, "open_position": open_position, "pending_order": pending_order}
 
 
 # ------------------------------------------------------------
@@ -375,6 +440,32 @@ def compute_metrics(
 
 
 # ------------------------------------------------------------
+# 기준선 (뉴스가 실제로 기여하는지 비교하는 용도)
+# ------------------------------------------------------------
+_BASELINE_KEYS = ("total_return", "max_drawdown", "trade_count", "win_rate", "sharpe_ratio")
+
+
+def _pick(metrics: dict[str, Any]) -> dict[str, Any]:
+    return {k: metrics[k] for k in _BASELINE_KEYS}
+
+
+def _baseline_summary(df, strategy, params, times, closes, opens, fill, risk, capital, interval_minutes):
+    """같은 봉·체결·비용 조건에서 다른 전략(복합)의 요약 지표."""
+    positions = compute_position(df, strategy, params).to_numpy(dtype=float)
+    sim = simulate(closes, positions, times, capital, risk, opens=opens, fill=fill)
+    return _pick(compute_metrics(sim, closes, capital, interval_minutes))
+
+
+def _buy_hold_summary(times, closes, opens, fill, risk, capital, interval_minutes):
+    """단순 보유: 첫 신호 가능 봉에서 사서 끝까지 든다 (같은 체결 방식·수수료, 손절/익절은 없음)."""
+    positions = np.ones(len(closes))
+    positions[0] = 0.0
+    bh_risk = {**risk, "stop_loss_pct": None, "take_profit_pct": None, "trailing_stop_pct": None}
+    sim = simulate(closes, positions, times, capital, bh_risk, opens=opens, fill=fill)
+    return _pick(compute_metrics(sim, closes, capital, interval_minutes))
+
+
+# ------------------------------------------------------------
 # 진입점
 # ------------------------------------------------------------
 def _to_epoch(value: Any) -> int:
@@ -391,12 +482,21 @@ def run_backtest(
     risk: dict[str, Any] | None = None,
     interval_minutes: int = 1,
     drop_last_bar: bool = True,
+    fill: str = "close",
+    news: list[dict[str, Any]] | None = None,
+    compare: bool = False,
 ) -> dict[str, Any]:
     """OHLC 봉 배열로 백테스트를 실행한다.
 
     candles: 시간 오름차순 [{window_start, open, high, low, close, volume}, ...]
     drop_last_bar: 집계 중일 수 있는 마지막 봉을 시뮬레이션에서 제외(리페인팅 방지).
+    fill: "close"(신호 봉 종가 체결, 기본) | "next_open"(다음 봉 시가 체결). simulate() 참고.
+    news: news_sentiment 전략에서만 쓰는 뉴스 신호 목록 (news_features.news_features 참고). 다른 전략은 무시한다.
+          None/빈 목록이면 신호가 없어 체결이 없다 (경고로 알린다).
+    compare: True 면 같은 기간·같은 비용 조건의 복합 전략과 단순 보유 성과를 `baselines` 로 함께 돌려준다.
     """
+    if fill not in FILL_MODES:
+        raise ValueError(f"fill 은 {'/'.join(FILL_MODES)} 중 하나여야 합니다")
     merged_params = merge_params(strategy, params)
     merged_risk = merge_risk(risk)
     if not (isinstance(initial_capital, (int, float)) and math.isfinite(initial_capital)
@@ -418,12 +518,35 @@ def run_backtest(
     })
     times = [_to_epoch(c["window_start"]) for c in rows]
 
-    positions = compute_position(df, strategy, merged_params).to_numpy(dtype=float)
     closes = df["Close"].to_numpy(dtype=float)
-    sim = simulate(closes, positions, times, float(initial_capital), merged_risk)
+    opens = df["Open"].to_numpy(dtype=float)
+    warnings: list[str] = []
+    reasons = None
+    news_info = None
+    if strategy == NEWS_STRATEGY:
+        feats = news_features(times, interval_minutes, news or [], merged_params)
+        combined = None
+        if merged_params["confirm_combined"]:
+            combined = compute_position(df, "combined", {}).to_numpy(dtype=float)
+        positions, reasons = news_stance(feats["score"], feats["weight"], merged_params, combined)
+        valid_bars = int((feats["weight"] >= merged_params["min_weight"]).sum())
+        news_info = {"articles": len(news or []), "bars_with_signal": valid_bars}
+        if not news:
+            warnings.append("뉴스 신호가 없습니다. (수집·분류 전이거나 이 종목/기간에 기사가 없음)")
+        elif valid_bars == 0:
+            warnings.append("조건(관련도·신선도·min_weight)을 만족하는 뉴스가 있는 봉이 없습니다.")
+    else:
+        positions = compute_position(df, strategy, merged_params).to_numpy(dtype=float)
+    sim = simulate(closes, positions, times, float(initial_capital), merged_risk,
+                   opens=opens, fill=fill, reasons=reasons)
     metrics = compute_metrics(sim, closes, float(initial_capital), interval_minutes)
 
-    warnings: list[str] = []
+    if strategy == NEWS_STRATEGY and 0 < metrics["trade_count"] < MIN_TRADES_FOR_VERDICT:
+        warnings.append(
+            f"거래가 {metrics['trade_count']}회뿐입니다 (<{MIN_TRADES_FOR_VERDICT}). 결과가 우연일 수 있어 판단을 보류하세요."
+        )
+    if sim["pending_order"] is not None:
+        warnings.append("마지막 봉에서 낸 주문은 다음 봉 시가가 없어 체결되지 않았습니다.")
     need = required_bars(strategy, merged_params)
     if len(rows) < need * 2:
         warnings.append(
@@ -439,6 +562,15 @@ def run_backtest(
             "qty": _num(t["qty"], 8), "pnl_pct": _num(t["pnl_pct"]), "pnl_amount": _num(t["pnl_amount"], 2),
         }
 
+    baselines = None
+    if compare:
+        baselines = {
+            "combined": _baseline_summary(df, "combined", {}, times, closes, opens, fill, merged_risk,
+                                          float(initial_capital), interval_minutes),
+            "buy_hold": _buy_hold_summary(times, closes, opens, fill, merged_risk,
+                                          float(initial_capital), interval_minutes),
+        }
+
     open_pos = sim["open_position"]
     return {
         "strategy": strategy,
@@ -447,6 +579,7 @@ def run_backtest(
         "risk_used": merged_risk,
         "initial_capital": float(initial_capital),
         "interval_minutes": interval_minutes,
+        "fill": fill,
         "bars": len(rows),
         "start_time": times[0],
         "end_time": times[-1],
@@ -461,4 +594,6 @@ def run_backtest(
             "qty": _num(open_pos["qty"], 8), "unrealized_pct": _num(open_pos["unrealized_pct"]),
         },
         "warnings": warnings,
+        **({"news": news_info} if news_info is not None else {}),
+        **({"baselines": baselines} if baselines is not None else {}),
     }

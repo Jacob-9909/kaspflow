@@ -13,7 +13,7 @@
  *   그래야 차트의 봉과 매수/매도 마커가 1:1 로 맞는다.
  */
 import { useState } from "react";
-import type { BacktestConfig, BacktestResult, StrategyInfo } from "../api";
+import type { BacktestConfig, BacktestResult, BaselineSummary, FillMode, StrategyInfo } from "../api";
 
 interface Props {
   strategies: StrategyInfo[];
@@ -35,7 +35,18 @@ const REASON_LABEL: Record<string, string> = {
   stop_loss: "손절",
   take_profit: "익절",
   trailing_stop: "추격손절",
+  news_expired: "뉴스 만료", // 뉴스 신호가 식거나 끊겨서 청산 (news_sentiment)
 };
+
+const FILL_OPTIONS: { id: FillMode; label: string; hint: string }[] = [
+  { id: "auto", label: "자동", hint: "뉴스 전략은 다음 봉 시가, 나머지는 신호 봉 종가" },
+  { id: "close", label: "신호 봉 종가", hint: "신호가 확정된 봉의 종가로 체결 (낙관적)" },
+  { id: "next_open", label: "다음 봉 시가", hint: "판단은 종가, 체결은 다음 봉 시가 (시간 누수 방지)" },
+];
+
+/** 결과의 실제 체결 방식 설명 */
+const fillText = (fill?: string) =>
+  fill === "next_open" ? "다음 봉 시가 체결" : "신호 봉 종가 체결";
 
 const signedPct = (v: number, digits = 2) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(digits)}%`;
 const plainPct = (v: number, digits = 1) => `${(v * 100).toFixed(digits)}%`;
@@ -64,6 +75,30 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "up
   );
 }
 
+/** 기준선 표의 한 행 */
+function BaselineRow({
+  label,
+  b,
+  strong,
+  hideTrades,
+}: {
+  label: string;
+  b: BaselineSummary;
+  strong?: boolean;
+  hideTrades?: boolean;
+}) {
+  return (
+    <tr className={strong ? "bt__row--strong" : undefined}>
+      <td>{label}</td>
+      <td className={`num ${b.total_return >= 0 ? "up" : "down"}`}>{signedPct(b.total_return)}</td>
+      <td className="num down">{signedPct(b.max_drawdown)}</td>
+      <td className="num">{hideTrades ? "-" : `${b.trade_count}회`}</td>
+      <td className="num">{hideTrades ? "-" : plainPct(b.win_rate, 0)}</td>
+      <td className="num">{b.sharpe_ratio.toFixed(2)}</td>
+    </tr>
+  );
+}
+
 export function BacktestPanel({
   strategies,
   interval,
@@ -83,6 +118,7 @@ export function BacktestPanel({
   const [sl, setSl] = useState(pctToInput(config.stopLossPct));
   const [tp, setTp] = useState(pctToInput(config.takeProfitPct));
   const [ts, setTs] = useState(pctToInput(config.trailingStopPct));
+  const [fill, setFill] = useState<FillMode>(config.fill);
   const [params, setParams] = useState<Record<string, string>>(paramsToInput(config.params));
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -136,6 +172,7 @@ export function BacktestPanel({
       stopLossPct: slN,
       takeProfitPct: tpN,
       trailingStopPct: tsN,
+      fill,
       params: paramsN,
     });
   };
@@ -149,7 +186,8 @@ export function BacktestPanel({
         <div>
           <h2 className="bt__title">백테스트</h2>
           <p className="bt__sub">
-            midas-touch 전략 · <b>{interval}</b> 봉마다 신호 평가 (상단 '간격'에서 변경) · 종가 체결, 슬리피지 미반영
+            midas-touch 전략 + 뉴스 감정 전략 · <b>{interval}</b> 봉마다 신호 평가 (상단 '간격'에서 변경) ·{" "}
+            {fillText(result?.fill)}, 슬리피지 미반영
           </p>
         </div>
         <label className="switch">
@@ -192,6 +230,22 @@ export function BacktestPanel({
               </div>
             </div>
 
+            <div className="bt__row">
+              <span className="toolbar__label">체결</span>
+              <div className="symbol-selector">
+                {FILL_OPTIONS.map((o) => (
+                  <button
+                    key={o.id}
+                    className={o.id === fill ? "chip chip--sm chip--active" : "chip chip--sm"}
+                    onClick={() => setFill(o.id)}
+                    title={o.hint}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="bt__fields">
               <label className="field">
                 <span>초기 자본 (USDT)</span>
@@ -227,6 +281,13 @@ export function BacktestPanel({
                 적용
               </button>
             </div>
+            {current?.requires_news && (
+              <p className="muted">
+                뉴스 감정 전략: 봉 마감까지 수집된 기사의 관련도·감정 확률을 감쇠 가중 평균한 news_score 가 buy_th 이상이면 진입,
+                sell_th 이하이거나 신호가 식으면(min_weight 미만) 청산합니다. confirm_combined=1 이면 복합 전략이 약세가 아닐 때만 진입합니다.
+                기사 수집·Laya 정확도 검증(라벨링) 전의 결과는 참고용입니다.
+              </p>
+            )}
             {current && Object.keys(params).length === 0 && (
               <p className="muted">{current.label}은 하위 5개 전략의 기본 파라미터를 그대로 사용합니다 (3표 이상 강세면 진입).</p>
             )}
@@ -257,6 +318,49 @@ export function BacktestPanel({
                 <Stat label="시장 노출도" value={plainPct(m.exposure_pct, 0)} />
                 <Stat label="최종 자산 (USDT)" value={money(m.final_value)} />
               </div>
+
+              {result.baselines && (
+                <div className="bt__table-wrap">
+                  <table className="bt__table">
+                    <caption className="bt__caption">기준선 비교 · 같은 기간·수수료·체결 방식 (뉴스가 실제로 기여하는지 확인)</caption>
+                    <thead>
+                      <tr>
+                        <th />
+                        <th className="num">수익률</th>
+                        <th className="num">최대 낙폭</th>
+                        <th className="num">거래</th>
+                        <th className="num">승률</th>
+                        <th className="num">샤프</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <BaselineRow
+                        label={`${result.label} (선택)`}
+                        b={{
+                          total_return: m.total_return,
+                          max_drawdown: m.max_drawdown,
+                          trade_count: m.trade_count,
+                          win_rate: m.win_rate,
+                          sharpe_ratio: m.sharpe_ratio,
+                        }}
+                        strong
+                      />
+                      <BaselineRow label="복합 전략" b={result.baselines.combined} />
+                      <BaselineRow label="단순 보유" b={result.baselines.buy_hold} hideTrades />
+                    </tbody>
+                  </table>
+                  <p className="muted">
+                    뉴스 전략이 복합 전략·단순 보유를 일관되게 넘지 못하면 뉴스 피처는 효과가 없는 것으로 봅니다.
+                  </p>
+                </div>
+              )}
+
+              {result.news && (
+                <p className="bt__meta">
+                  뉴스 {result.news.articles}건 사용 · 신호가 있는 봉 {result.news.bars_with_signal}개
+                  {result.news.model_version && ` · 모델 ${result.news.model_version}`}
+                </p>
+              )}
 
               <p className="bt__meta">
                 {result.symbol} · {result.interval} · 집계 완료된 {result.bars}봉 기준 (진행 중인 마지막 봉 제외)

@@ -12,6 +12,8 @@
  *   - lightweight-charts의 시간(time)은 "초 단위 UTC epoch"(UTCTimestamp)이다.
  *     우리 데이터의 window_start(ISO 문자열)를 초 단위로 변환해줘야 한다.
  *   - 백테스트 매수/매도는 series.setMarkers 로 캔들 위에 화살표로 표시한다.
+ *   - 뉴스는 같은 setMarkers 에 봉마다 감정 색 점(●)으로 얹는다. 점을 누르면(봉을 누르면) 부모가 그 봉의
+ *     기사 목록(제목·링크)을 보여 준다. 기사의 시각은 collected_at 이 속한 봉이다 (백테스트 기준 시각과 같다).
  */
 import { useEffect, useRef } from "react";
 import {
@@ -24,12 +26,19 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import type { BacktestMarker, Candle } from "../api";
+import type { BacktestMarker, Candle, NewsItem } from "../api";
 
 interface Props {
   candles: Candle[];
   // 백테스트 매수/매도 이벤트 (없으면 마커를 그리지 않는다)
   markers?: BacktestMarker[];
+  // 뉴스 신호 (없으면 점을 그리지 않는다) + 봉 길이(ms): 기사를 어느 봉에 찍을지 계산하는 데 쓴다.
+  news?: NewsItem[];
+  stepMs?: number | null;
+  // 봉을 눌렀을 때 (time = 그 봉의 시작, UTC epoch 초)
+  onBarClick?: (time: number) => void;
+  // 보이는 시간 구간이 바뀔 때 (보조 차트가 시간축을 맞추는 데 쓴다)
+  onVisibleTimeRange?: (range: { from: number; to: number } | null) => void;
   // 심볼/간격 등 "다른 차트가 됐다"를 알리는 키. 바뀌면 시간축을 처음부터 다시 맞춘다.
   viewKey: string;
   // 사용자가 왼쪽 끝 근처까지 스크롤했을 때 호출 (과거 데이터를 더 불러오라는 신호)
@@ -75,7 +84,49 @@ function toSeriesMarkers(markers: BacktestMarker[], candleTimes: Set<number>): S
     });
 }
 
-export function CandleChart({ candles, markers, viewKey, onNeedOlder }: Props) {
+// 뉴스 점 색 (감정). 중립은 회색.
+const NEWS_COLOR = { positive: "#26a69a", neutral: "#8b95a5", negative: "#ef5350" } as const;
+
+/** 기사들을 봉(시작 시각)별로 묶는다. collected_at 이 속한 봉 = floor(시각 / 봉 길이) * 봉 길이 (date_bin epoch 기준과 같다). */
+export function groupNewsByBar(news: NewsItem[], stepMs: number | null): Map<number, NewsItem[]> {
+  const out = new Map<number, NewsItem[]>();
+  if (!stepMs) return out;
+  const stepSec = stepMs / 1000;
+  for (const n of news) {
+    const sec = Date.parse(n.collected_at) / 1000;
+    if (!Number.isFinite(sec)) continue;
+    const bar = Math.floor(sec / stepSec) * stepSec;
+    const list = out.get(bar);
+    if (list) list.push(n);
+    else out.set(bar, [n]);
+  }
+  return out;
+}
+
+/** 봉 안 기사들의 대표 감정: 확률 순합(긍정-부정)이 +-0.15 를 넘으면 긍정/부정, 아니면 중립. */
+export function barSentiment(items: NewsItem[]): keyof typeof NEWS_COLOR {
+  const net = items.reduce((a, n) => a + ((n.p_pos ?? 0) - (n.p_neg ?? 0)), 0) / Math.max(items.length, 1);
+  return net > 0.15 ? "positive" : net < -0.15 ? "negative" : "neutral";
+}
+
+/** 뉴스 -> 봉마다 점 1개 (기사가 여러 건이면 개수 표시). 화면에 없는 봉은 제외. */
+function toNewsMarkers(news: NewsItem[], stepMs: number | null, candleTimes: Set<number>): SeriesMarker<Time>[] {
+  const out: SeriesMarker<Time>[] = [];
+  for (const [bar, items] of groupNewsByBar(news, stepMs)) {
+    if (!candleTimes.has(bar)) continue;
+    out.push({
+      time: bar as UTCTimestamp,
+      position: "aboveBar", // 캔들 위에 얹어 몸통에 가리지 않게 한다 (백테스트 매도 화살표와는 위아래로 쌓인다)
+      shape: "circle",
+      size: 2,
+      color: NEWS_COLOR[barSentiment(items)],
+      text: items.length > 1 ? String(items.length) : undefined,
+    });
+  }
+  return out;
+}
+
+export function CandleChart({ candles, markers, news, stepMs, onBarClick, onVisibleTimeRange, viewKey, onNeedOlder }: Props) {
   // 차트를 그릴 DOM 요소(div)에 대한 참조
   const containerRef = useRef<HTMLDivElement>(null);
   // 차트/시리즈 인스턴스를 리렌더 사이에 유지하기 위한 참조
@@ -94,6 +145,10 @@ export function CandleChart({ candles, markers, viewKey, onNeedOlder }: Props) {
   // 콜백은 렌더마다 새로 만들어지므로 ref 로 최신 것만 참조한다 (차트 구독은 마운트 때 1번만 건다).
   const onNeedOlderRef = useRef(onNeedOlder);
   onNeedOlderRef.current = onNeedOlder;
+  const onBarClickRef = useRef(onBarClick);
+  onBarClickRef.current = onBarClick;
+  const onRangeRef = useRef(onVisibleTimeRange);
+  onRangeRef.current = onVisibleTimeRange;
 
   // 1) 마운트 시 1회: 차트 인스턴스 생성 + 리사이즈 대응
   useEffect(() => {
@@ -114,7 +169,8 @@ export function CandleChart({ candles, markers, viewKey, onNeedOlder }: Props) {
         secondsVisible: false,
         borderColor: "#2a2e39",
       },
-      rightPriceScale: { borderColor: "#2a2e39" },
+      // 가격축 폭을 보조 차트(news_score)와 같게 고정해 두 차트의 시간축이 세로로 정렬되게 한다.
+      rightPriceScale: { borderColor: "#2a2e39", minimumWidth: 72 },
       height: 480,
       autoSize: true, // 컨테이너 크기에 맞춰 자동 조정
     });
@@ -164,8 +220,21 @@ export function CandleChart({ candles, markers, viewKey, onNeedOlder }: Props) {
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(handleRange);
 
+    // 봉 클릭 -> 부모가 그 봉의 뉴스를 보여 준다. 보이는 시간 구간 변경 -> 보조 차트가 따라온다.
+    const handleClick = (param: { time?: Time }) => {
+      if (typeof param.time === "number") onBarClickRef.current?.(param.time);
+    };
+    chart.subscribeClick(handleClick);
+    const handleTimeRange = (range: { from: Time; to: Time } | null) => {
+      if (!range || typeof range.from !== "number" || typeof range.to !== "number") return onRangeRef.current?.(null);
+      onRangeRef.current?.({ from: range.from, to: range.to });
+    };
+    chart.timeScale().subscribeVisibleTimeRangeChange(handleTimeRange);
+
     // 언마운트 시 정리 (메모리 누수 방지)
     return () => {
+      chart.unsubscribeClick(handleClick);
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(handleTimeRange);
       window.removeEventListener("resize", handleResize);
       container.removeEventListener("pointerdown", arm);
       container.removeEventListener("wheel", arm);
@@ -249,14 +318,18 @@ export function CandleChart({ candles, markers, viewKey, onNeedOlder }: Props) {
     prevRef.current = candles;
   }, [candles, viewKey]);
 
-  // 3) 백테스트 마커 갱신: 캔들 데이터가 먼저 들어간 뒤(위 effect) 마커를 얹는다.
-  //    markers 가 없거나 비면 빈 배열로 지워서, 백테스트를 끄면 마커도 사라진다.
+  // 3) 마커 갱신: 캔들 데이터가 먼저 들어간 뒤(위 effect) 백테스트 + 뉴스 마커를 한 번에 얹는다.
+  //    둘 다 없으면 빈 배열로 지워서, 백테스트/뉴스를 끄면 마커도 사라진다. (lightweight-charts 는 시간 오름차순 필수)
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
     const times = new Set(candles.map((c) => Date.parse(c.window_start) / 1000));
-    series.setMarkers(markers && markers.length > 0 ? toSeriesMarkers(markers, times) : []);
-  }, [candles, markers]);
+    const all = [
+      ...(markers && markers.length > 0 ? toSeriesMarkers(markers, times) : []),
+      ...(news && news.length > 0 ? toNewsMarkers(news, stepMs ?? null, times) : []),
+    ].sort((a, b) => (a.time as number) - (b.time as number));
+    series.setMarkers(all);
+  }, [candles, markers, news, stepMs]);
 
   return <div ref={containerRef} style={{ width: "100%" }} />;
 }

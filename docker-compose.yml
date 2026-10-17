@@ -91,6 +91,8 @@ services:
     volumes:
       # /docker-entrypoint-initdb.d 안의 .sql은 DB 최초 생성 시 자동 실행됨
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # 뉴스 테이블 (이미 만든 볼륨에는 적용되지 않는다 -> docker compose exec -T postgres psql -U crypto -d crypto < db/news.sql)
+      - ./db/news.sql:/docker-entrypoint-initdb.d/02-news.sql:ro
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crypto}"]
@@ -112,6 +114,57 @@ services:
       KAFKA_TOPIC: ${KAFKA_TOPIC:-crypto-trades}
       SYMBOLS: ${SYMBOLS:-BTCUSDT,ETHUSDT,XRPUSDT}
     restart: unless-stopped   # WebSocket이 죽어도 컨테이너 재시작
+
+  # ----------------------------------------------------------
+  # 4-1) News Collector — 코인 매체 RSS 폴링 후 Kafka(news-raw)로 produce
+  #      외부 사이트를 폴링하므로 기본 `up` 에는 포함하지 않는다(profile).
+  #      실행:  docker compose --profile news up -d news-collector
+  #      설계:  docs/news-signal-design.md
+  # ----------------------------------------------------------
+  news-collector:
+    build: ./news-collector
+    container_name: news-collector
+    profiles: ["news"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      NEWS_TOPIC: ${NEWS_TOPIC:-news-raw}
+      NEWS_POLL_SECONDS: ${NEWS_POLL_SECONDS:-300}
+      NEWS_FEEDS: ${NEWS_FEEDS:-}
+    restart: unless-stopped
+
+  # ----------------------------------------------------------
+  # 4-2) Signal Worker — news-raw -> Postgres(news_raw / news_signal)
+  #      기본은 저장 전용(모델 없음). Laya 분류는 INSTALL_LAYA=1 로 빌드 + LAYA_ENABLED=true:
+  #        INSTALL_LAYA=1 LAYA_ENABLED=true docker compose --profile news up -d --build signal-worker
+  # ----------------------------------------------------------
+  signal-worker:
+    build:
+      context: ./signal-worker
+      args:
+        INSTALL_LAYA: ${INSTALL_LAYA:-0}
+    container_name: signal-worker
+    profiles: ["news"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      NEWS_TOPIC: ${NEWS_TOPIC:-news-raw}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-crypto}
+      POSTGRES_USER: ${POSTGRES_USER:-crypto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crypto}
+      LAYA_ENABLED: ${LAYA_ENABLED:-false}
+      LAYA_CHECKPOINT: ${LAYA_CHECKPOINT:-convaiinnovations/laya}
+    volumes:
+      - hf-cache:/hf-cache
+    restart: unless-stopped
 
   # ----------------------------------------------------------
   # 5) Spark — Structured Streaming 잡 실행
@@ -170,3 +223,4 @@ services:
 # 이름있는 볼륨: 컨테이너를 지워도 DB 데이터는 유지된다
 volumes:
   pgdata:
+  hf-cache:   # Hugging Face 모델 캐시 (signal-worker, Laya)

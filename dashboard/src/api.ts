@@ -83,7 +83,7 @@ export async function fetchOhlcPage(
   return { candles: data.candles, earliest: data.earliest ?? null };
 }
 
-/** 지원하는 봉 간격 목록 (예: ["1m","5m","15m","1h","4h","1d"]). */
+/** 지원하는 봉 간격 목록 (예: ["1m","5m","15m","30m","1h","4h","1d"]). */
 export async function fetchIntervals(): Promise<string[]> {
   try {
     const data = await getJson<{ intervals: string[] }>("/api/intervals");
@@ -103,7 +103,11 @@ export interface StrategyInfo {
   id: string;
   label: string;
   params: Record<string, number>; // 기본 파라미터 (입력 폼의 초기값)
+  requires_news?: boolean; // 뉴스 신호가 필요한 전략 (news_sentiment). 구버전 백엔드엔 없음
 }
+
+/** 체결 가격 선택: auto = 서버 기본(뉴스 전략은 다음 봉 시가, 나머지는 종가) */
+export type FillMode = "auto" | "close" | "next_open";
 
 /** 백테스트 실행 설정 (UI 입력값). 손절/익절/추격은 비율(0.02 = 2%), null = 미사용 */
 export interface BacktestConfig {
@@ -114,6 +118,7 @@ export interface BacktestConfig {
   stopLossPct: number | null;
   takeProfitPct: number | null;
   trailingStopPct: number | null;
+  fill: FillMode;
   params: Record<string, number>;
 }
 
@@ -122,7 +127,7 @@ export interface BacktestMarker {
   time: number;
   side: "buy" | "sell";
   price: number;
-  reason: string; // signal | stop_loss | take_profit | trailing_stop
+  reason: string; // signal | stop_loss | take_profit | trailing_stop | news_expired
   pnl_pct: number | null; // 매도 시 손익(수수료 반영), 매수는 null
 }
 
@@ -153,11 +158,23 @@ export interface BacktestMetrics {
   exit_reasons: Record<string, number>;
 }
 
+/** 비교용 기준선 요약 (같은 기간·같은 비용·같은 체결 방식) */
+export interface BaselineSummary {
+  total_return: number;
+  max_drawdown: number;
+  trade_count: number;
+  win_rate: number;
+  sharpe_ratio: number;
+}
+
 export interface BacktestResult {
   symbol: string;
   interval: string;
   strategy: string;
   label: string;
+  fill?: string; // close | next_open (구버전 백엔드엔 없음)
+  news?: { articles: number; bars_with_signal: number; model_version: string | null }; // news_sentiment 일 때만
+  baselines?: { combined: BaselineSummary; buy_hold: BaselineSummary }; // compare=true 일 때만
   bars: number;
   initial_capital: number;
   params_used: Record<string, number>;
@@ -204,6 +221,77 @@ export async function fetchBacktest(
   if (cfg.stopLossPct !== null) q.set("stop_loss_pct", String(cfg.stopLossPct));
   if (cfg.takeProfitPct !== null) q.set("take_profit_pct", String(cfg.takeProfitPct));
   if (cfg.trailingStopPct !== null) q.set("trailing_stop_pct", String(cfg.trailingStopPct));
+  if (cfg.fill !== "auto") q.set("fill", cfg.fill);
+  q.set("compare", "true"); // 복합 전략·단순 보유 기준선을 함께 받는다
   if (Object.keys(cfg.params).length > 0) q.set("params", JSON.stringify(cfg.params));
   return getJson<BacktestResult>(`/api/backtest?${q.toString()}`);
+}
+
+// ============================================================
+// 뉴스·감정 시그널 (백엔드 news_queries.py / docs/news-signal-design.md)
+//   뉴스 테이블이 없거나 아직 수집 전이면 백엔드가 503 을 준다 -> 아래 함수들은 null 을 돌려주고
+//   화면은 뉴스 기능만 조용히 숨긴다 (시세·백테스트는 그대로).
+// ============================================================
+
+export type Sentiment = "positive" | "neutral" | "negative";
+
+export interface NewsItem {
+  article_id: string;
+  symbol: string; // BTCUSDT ... 또는 MARKET
+  source: string;
+  title: string;
+  url: string;
+  published_at: string | null;
+  collected_at: string; // ISO8601 — 차트에서는 이 시각이 속한 봉에 찍는다
+  p_relevant: number | null;
+  p_pos: number | null;
+  p_neu: number | null;
+  p_neg: number | null;
+  event_type: string | null;
+  sentiment: Sentiment | null;
+  model_version: string;
+}
+
+export async function fetchNews(symbol: string, since?: string, limit = 200): Promise<NewsItem[] | null> {
+  const q = new URLSearchParams({ symbol, limit: String(limit) });
+  if (since) q.set("since", since);
+  try {
+    return (await getJson<{ news: NewsItem[] }>(`/api/news?${q.toString()}`)).news;
+  } catch {
+    return null;
+  }
+}
+
+export interface NewsScorePoint {
+  time: number; // 봉 시작 (UTC epoch 초, 캔들과 같은 값)
+  score: number; // news_score (-1 ~ 1)
+  weight: number;
+  count: number;
+}
+
+export async function fetchNewsScore(symbol: string, interval: string, limit: number): Promise<NewsScorePoint[] | null> {
+  const q = new URLSearchParams({ symbol, interval, limit: String(Math.min(Math.max(limit, 10), 5000)) });
+  try {
+    return (await getJson<{ series: NewsScorePoint[] }>(`/api/news/score?${q.toString()}`)).series;
+  } catch {
+    return null;
+  }
+}
+
+export interface NewsHealth {
+  status: "ok" | "stale" | "empty";
+  last_collected_at: string | null;
+  age_minutes: number | null;
+  stale_after_minutes: number;
+  articles_24h: number;
+  signals_24h: number;
+  model_version: string | null;
+}
+
+export async function fetchNewsHealth(): Promise<NewsHealth | null> {
+  try {
+    return await getJson<NewsHealth>("/api/news/health");
+  } catch {
+    return null;
+  }
 }

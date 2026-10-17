@@ -123,12 +123,12 @@ npm run dev        # http://localhost:5173 (핫 리로드)
 
 ## 📊 백테스트 (midas-touch 전략 이식)
 
-대시보드의 **백테스트** 패널을 켜면 선택한 **봉 간격**(상단 `간격`: 1m/5m/15m/1h/4h/1d)마다 전략 신호를 평가하고, 캔들 차트에 **매수(▲, 초록) / 매도(▼, 빨강 + 손익%)** 를 찍고 성과 지표·거래 목록을 보여줍니다.
+대시보드의 **백테스트** 패널을 켜면 선택한 **봉 간격**(상단 `간격`: 1m/5m/15m/30m/1h/4h/1d)마다 전략 신호를 평가하고, 캔들 차트에 **매수(▲, 초록) / 매도(▼, 빨강 + 손익%)** 를 찍고 성과 지표·거래 목록을 보여줍니다.
 
 - 전략: SMA 교차 · MACD · RSI · 볼린저 밴드 · OBV · 복합(하위 5개 다수결). 로직과 기본 파라미터는 [midas-touch](https://github.com/Jacob-9909/midas-touch) `stock_analyzer.py` 와 동일하며, 같은 데이터에서 신호·체결이 일치함을 확인했습니다.
 - 리스크/비용: 수수료(편도 bp), 손절 · 익절 · 추격손절(%). 리스크 청산이 신호 청산보다 우선합니다.
 - 코인용 조정: 소수 수량 전액 매수, 수수료 기본 10bp, 손절·익절·추격은 기본 꺼짐(midas 기본값은 일봉 기준이라 분봉엔 과함), 샤프 연환산은 봉 간격 기준.
-- 한계: 신호 봉의 종가로 체결(슬리피지 미반영)이라 결과가 낙관적이며, 집계 중인 마지막 봉은 제외합니다. midas 기본 파라미터는 일봉 주식용이라 분봉 코인에서는 손실이 날 수 있습니다. **투자 조언이 아닙니다.**
+- 한계: 기본은 신호 봉의 종가로 체결(슬리피지 미반영)이라 결과가 낙관적입니다. `fill=next_open` 쿼리로 다음 봉 시가 체결을 고를 수 있습니다(판단은 종가, 체결만 다음 시가). 집계 중인 마지막 봉은 제외합니다. midas 기본 파라미터는 일봉 주식용이라 분봉 코인에서는 손실이 날 수 있습니다. **투자 조언이 아닙니다.**
 - API: `GET /backtest` (파라미터는 `/docs` 참고), `GET /backtest/strategies`. 코드는 `backend/backtest.py`, 테스트는 `cd backend && python -m unittest discover -s tests`.
 
 ### 과거 데이터 일회성 백필
@@ -144,6 +144,28 @@ docker compose -f docker-compose.prod.yml exec -T backend python - --days 30 --a
 
 - `ON CONFLICT DO NOTHING` 이라 기존(Spark) 행은 덮어쓰지 않고, 여러 번 돌려도 같은 결과입니다. 심볼 단위 트랜잭션이라 실패하면 그 심볼은 하나도 안 들어갑니다.
 - 1분봉은 하루 심볼당 약 1,440행입니다. `/ohlc` 재집계 쿼리는 심볼 전체 행을 훑으므로 30~60일 정도를 권장합니다.
+
+---
+
+## 📰 뉴스·감정 시그널 (선택 기능)
+
+코인 매체 RSS를 수집해 종목별 관련도·감정·이벤트 확률로 바꾸고(Laya), 이 값을 백테스트 전략 `news_sentiment` 의 입력으로 씁니다. 매매 판단은 Laya가 하지 않습니다. 설계·결정·실측은 [`docs/news-signal-design.md`](docs/news-signal-design.md).
+
+```bash
+# 1) 스키마 (init.sql 과 별개로 한 번 적용. VM: sudo -u postgres psql -d crypto -f db/news.sql)
+docker compose exec -T postgres psql -U crypto -d crypto < db/news.sql
+# 2) 수집 + 저장 (모델 없음). 외부 사이트를 폴링하므로 profile 로 분리했다
+docker compose --profile news up -d news-collector signal-worker
+# 3) Laya 분류까지 (PyTorch CPU 포함 이미지, 모델 가중치 ~808MB 는 hf-cache 볼륨에 저장)
+INSTALL_LAYA=1 LAYA_ENABLED=true docker compose --profile news up -d --build signal-worker
+#    저장 전용 때 쌓인 원문은 한 번 분류:  docker compose exec signal-worker python main.py --backfill
+```
+
+- API: `GET /news`, `/news/health`(수집 중단 감지), `/news/score`, `/features`(JSON/CSV), `GET /backtest?strategy=news_sentiment&compare=true`
+- 대시보드: 뉴스 점(●, 감정 색) · 점을 누르면 그 봉의 기사 · `news_score` 보조 선 · 복합 전략/단순 보유 기준선 비교
+- 로컬 사전 검증(M0): `cd signal-worker && python scripts/precheck_laya.py --n 20` (laya 설치 필요)
+- **정확도 검증(라벨링, M3 게이트) 전의 신호는 전략에 쓰지 마세요.** 거래가 30회 미만이면 결과는 우연일 수 있습니다. 투자 조언이 아닙니다.
+- 테스트: `news-collector`, `signal-worker`, `backend` 각각 `python -m unittest discover -s tests`. DB가 필요한 테스트는 `TEST_DATABASE_URL` 이 있을 때만 돕니다.
 
 ---
 
@@ -179,6 +201,8 @@ kaspflow/
 │   ├── tests/               #   백테스트 유닛 테스트
 │   ├── requirements.txt
 │   └── Dockerfile
+├── news-collector/          # 뉴스: 코인 매체 RSS → Kafka(news-raw)  (docs/news-signal-design.md)
+├── signal-worker/           # 뉴스: news-raw → 종목 매칭 → (Laya 분류) → Postgres(news_raw, news_signal)
 ├── dashboard/               # 5️⃣ API → 실시간 차트 (React + Vite + lightweight-charts)
 │   ├── src/
 │   │   ├── main.tsx         #   진입점 (여기부터 실행)
@@ -254,6 +278,7 @@ docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compo
 - **CD 완성**: Oracle VM SSH 배포 잡 추가 (위 CI/CD 섹션 참고).
 - 거래량 급증 탐지 → `price_alert` 테이블 채우기 (스키마는 이미 준비됨).
 - 이동평균/볼린저 밴드 등 추가 지표 (차트 오버레이).
-- 백테스트: 파라미터 그리드 서치(midas `grid_search` 이식), 자본곡선 표시, 다음 봉 시가 체결 옵션.
+- 백테스트: 파라미터 그리드 서치(midas `grid_search` 이식), 자본곡선 표시.
+- **뉴스·감정 시그널**: RSS 수집 → Kafka → Laya 분류 → 백테스트 피처. 설계는 `docs/news-signal-design.md`, 수집기는 `news-collector/`, 스키마는 `db/news.sql`.
 - 여러 거래소 동시 수집 → 거래소 간 가격차(김프) 모니터링.
 - Grafana로 대시보드 교체, Cassandra로 저장소 교체 실습.

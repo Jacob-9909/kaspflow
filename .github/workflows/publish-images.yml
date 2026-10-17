@@ -5,7 +5,7 @@
 #   - main 에 push 될 때 (= PR 머지 시)
 #   - 수동 실행(workflow_dispatch)도 허용
 # 무엇을 하나:
-#   4개 서비스(backend / dashboard / producer / spark)를 각각 이미지로 빌드해
+#   6개 서비스(backend / dashboard / producer / news-collector / signal-worker / spark)를 각각 이미지로 빌드해
 #   ghcr.io/<OWNER>/<REPO>-<서비스> 로 push 한다.
 #   태그: latest + 커밋 SHA (예: :latest, :sha-1a2b3c4)
 #
@@ -42,6 +42,13 @@ jobs:
             context: ./dashboard
           - name: producer
             context: ./producer
+          - name: news-collector
+            context: ./news-collector
+          # signal-worker: 기본은 저장 전용(INSTALL_LAYA=0, M2). Laya 를 켜는 M3 에서 1 로 바꾼다
+          # (PyTorch CPU + laya 포함, 이미지가 커지고 QEMU arm64 빌드가 느려질 수 있다).
+          - name: signal-worker
+            context: ./signal-worker
+            build_args: INSTALL_LAYA=0
           - name: spark
             context: ./spark
 
@@ -83,6 +90,7 @@ jobs:
           context: ${{ matrix.context }}
           # amd64(로컬 개발 맥/PC) + arm64(Oracle VM) 둘 다 빌드
           platforms: linux/amd64,linux/arm64
+          build-args: ${{ matrix.build_args }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

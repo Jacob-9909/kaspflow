@@ -1,0 +1,3 @@
+# Laya 분류기 (LAYA_ENABLED=true, M3). INSTALL_LAYA=1 로 이미지를 빌드할 때만 설치된다.
+# torch 는 Dockerfile 이 CPU 전용 wheel 로 먼저 설치한다 (CUDA 패키지가 들어가면 이미지가 수 GB 로 커진다).
+laya==0.4.8

@@ -1,0 +1,6 @@
+# Kafka 컨슈머 (producer/, news-collector/ 와 같은 버전)
+confluent-kafka==2.5.3
+# PostgreSQL 드라이버 (psycopg 3, backend 와 같은 버전)
+psycopg[binary]==3.2.4
+# symbols.yaml 로딩
+PyYAML==6.0.3
