@@ -25,7 +25,9 @@ import news_features as nf  # noqa: E402
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 T0_EPOCH = int(T0.timestamp())
 STEP = 15  # 분
-P = dict(nf.NEWS_DEFAULT_PARAMS)  # 기본: lookback 240, tau 120, rel_th 0.5, max_age 360, w0 0.5, market_w 0.5
+# 기본: lookback 240, tau 120, rel_th 0.5, max_age 360, w0 0.5, market_w 0.5.
+# 관련도 가중까지 검증하려고 use_rel=1 로 둔다 (운영 기본값 0 은 TestRelevanceOff 에서 따로 본다).
+P = {**nf.NEWS_DEFAULT_PARAMS, "use_rel": 1}
 
 
 def times(n=8):
@@ -101,6 +103,13 @@ class TestFilters(unittest.TestCase):
     def test_relevance_threshold(self):
         self.assertEqual(feats([item(100, rel=0.49)])["count"][0], 0)
         self.assertEqual(feats([item(100, rel=0.5)])["count"][0], 1)
+
+    def test_relevance_off_by_default_keeps_all_and_weights_equally(self):
+        off = {"use_rel": 0}
+        self.assertEqual(nf.NEWS_DEFAULT_PARAMS["use_rel"], 0)
+        f = feats([item(600, rel=0.1), item(600, rel=None)], off)
+        self.assertEqual(f["count"][0], 2)
+        self.assertAlmostEqual(f["weight"][0], 2 * math.exp(-300 / (P["tau_min"] * 60)), places=9)
 
     def test_market_signal_is_scaled_and_other_symbols_ignored(self):
         f = feats([item(600, symbol="MARKET"), item(600, symbol="ETHUSDT")], symbol="BTCUSDT")

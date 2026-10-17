@@ -345,6 +345,8 @@ relevance와 sentiment가 모두 기준을 넘어야 M4로 간다. event_type은
 
 결론(잠정): relevance 필터(`p_relevant ≥ 0.5`)는 지금 사실상 무작위라 전략에서 빼거나 질문 문구를 고쳐야 한다(설계상 미달 시 첫 단계). sentiment 는 문구 수정 없이도 기준선에 가깝다. event_type 은 전략에서 뺀다.
 
+**조치(2026-10-17)**: `news_sentiment` 에 파라미터 `use_rel`(기본 **0**)을 추가했다. 0 이면 `p_relevant` 로 거르지도 가중하지도 않고, 종목 별칭이 매칭된 기사를 모두 같은 가중(감쇠만)으로 쓴다. 기사 1건의 가중치가 약 0.55 → 1 로 커지므로 `min_weight=1.0` 은 사실상 "신선한 기사 1건"이 된다. 거래가 너무 잦으면 `min_weight` 를 올린다. relevance 질문을 고쳐 다시 재고 나아지면 `use_rel=1` 로 켠다.
+
 ### 개발 환경
 
 - Apple Silicon 맥은 VM과 같은 arm64다. signal-worker 이미지를 CI 전에 맥에서 먼저 확인한다.

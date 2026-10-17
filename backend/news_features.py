@@ -10,7 +10,10 @@
   봉 [t, t+Δ) 의 판단 시각은 '봉 마감 T = t+Δ' 이다.
   - T 이전에 수집된(collected_at < T) 기사만 쓴다. 정확히 T 에 수집된 기사는 다음 봉의 몫이다.
   - 기준 시각은 published_at 이 아니라 collected_at(시스템이 실제로 안 시각)이다.
-  - 감쇠도 T 기준: w = p_relevant · exp(-(T - collected_at)/τ). collected_at < T 이므로 지수는 항상 0 이하.
+  - 감쇠도 T 기준: w = r · exp(-(T - collected_at)/τ). collected_at < T 이므로 지수는 항상 0 이하.
+    r 은 use_rel=1 이면 p_relevant, 기본(use_rel=0)은 1.
+    (2026-10-17 대리 라벨 측정에서 relevance 정확도가 최빈 기준선보다 낮아(0.567 vs 0.587, AUC 0.62)
+     관련도 필터·가중을 기본으로 끈다. 질문 문구를 고쳐 다시 재고 나아지면 use_rel=1 로 켠다.)
   - 발행(published_at)된 지 max_age_min 보다 오래된 기사는 제외한다 (첫 기동 때 RSS 가 주는 과거 기사 방지).
     published_at 이 없는 기사도 같은 이유로 제외한다.
 
@@ -44,7 +47,8 @@ NEWS_PARAM_SPECS: dict[str, tuple[float, float, float, bool]] = {
     "sell_th": (-0.2, -1.0, 1.0, False),        # 이 값 이하이면 청산
     "min_weight": (1.0, 0.0, 100.0, False),     # news_weight 가 이 값 미만이면 '신호 없음'
     "max_age_min": (360, 1, 10_080, True),      # 발행 후 이 시간이 지난 기사는 제외
-    "rel_th": (0.5, 0.0, 1.0, False),           # p_relevant 하한
+    "use_rel": (0, 0, 1, True),                 # 1 이면 p_relevant 로 거르고(rel_th) 가중한다. 기본 끔 (위 주석)
+    "rel_th": (0.5, 0.0, 1.0, False),           # p_relevant 하한 (use_rel=1 일 때만)
     "w0": (0.5, 0.0, 100.0, False),             # 수축용 사전 가중치
     "confirm_combined": (0, 0, 1, True),        # 1 이면 복합 전략 스탠스가 약세가 아닐 때만 진입
     "market_w": (0.5, 0.0, 1.0, False),         # MARKET 신호 반영 비율
@@ -104,8 +108,13 @@ def news_features(
         if symbol is not None and sym not in (symbol, MARKET_SYMBOL):
             continue
         rel, pos, neg = item.get("p_relevant"), item.get("p_pos"), item.get("p_neg")
-        if rel is None or pos is None or neg is None or rel < p["rel_th"]:
+        if pos is None or neg is None:
             continue
+        if p["use_rel"]:
+            if rel is None or rel < p["rel_th"]:
+                continue
+        else:
+            rel = 1.0
         collected, published = _epoch(item.get("collected_at")), _epoch(item.get("published_at"))
         if collected is None or published is None or collected - published > max_age:
             continue
