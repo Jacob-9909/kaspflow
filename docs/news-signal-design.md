@@ -333,6 +333,18 @@ relevance와 sentiment가 모두 기준을 넘어야 M4로 간다. event_type은
   - relevance 는 `news_signal` 에 `p_relevant`(주 대상 확률)만 있으므로 "주 대상인가" 이진 정확도로 잰다. 전략 필터(`p_relevant ≥ 0.5`)와 같은 기준이다.
   - 온도 T 는 `collected_at` 순 앞 절반에서 맞추고 뒤 절반에서 ECE 를 잰다(같은 표본으로 맞추고 재면 낙관적).
 
+#### 임시 측정: LLM 대리 라벨 (2026-10-17)
+
+사람 라벨 대신 Claude 가 150쌍(BTC 81, ETH 48, XRP 17, MARKET 4)에 라벨을 붙여 먼저 재 봤다. 라벨 파일은 `signal-worker/eval/claude_labels_20261017.csv`, 실행은 `python label.py eval --labels eval/claude_labels_20261017.csv`. **사람 라벨이 아니므로 게이트 판정으로 쓰지 않고 방향만 본다.** `news_label` 에는 넣지 않았다.
+
+| 질문 | 정확도 | 기준선(최빈) | ECE 보정 후 | 관찰 |
+| --- | --- | --- | --- | --- |
+| relevance | 0.567 | 0.587 | 0.090 | **기준선보다 낮다.** AUC 0.62, 임계값을 바꿔도 최고 0.613(@0.65). 무관 기사에 평균 0.90을 주는 등 거의 구분 못 함 |
+| sentiment | 0.667 | 0.380 | 0.138 | 기준 0.70에 근접, 기준선보다 +0.29. 긍정↔부정 뒤집힘은 2건뿐이고 오류 대부분이 중립 경계 → `p_pos − p_neg` 의 방향은 쓸 만해 보임 |
+| event_type | 0.400 | 0.347 | 0.132 | 기관·ETF 기사를 `other` 로 보내는 경우가 가장 많음(17건) |
+
+결론(잠정): relevance 필터(`p_relevant ≥ 0.5`)는 지금 사실상 무작위라 전략에서 빼거나 질문 문구를 고쳐야 한다(설계상 미달 시 첫 단계). sentiment 는 문구 수정 없이도 기준선에 가깝다. event_type 은 전략에서 뺀다.
+
 ### 개발 환경
 
 - Apple Silicon 맥은 VM과 같은 arm64다. signal-worker 이미지를 CI 전에 맥에서 먼저 확인한다.

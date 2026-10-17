@@ -5,6 +5,7 @@ M3 라벨링·정확도 측정 도구 (news_label)
 
   python label.py label [--n 150]          기사x종목 쌍을 소스별로 고르게 뽑아 사람이 정답을 붙인다.
   python label.py eval  [--model-version]  news_label 과 news_signal 을 맞춰 질문별 정확도·ECE·게이트 판정.
+  python label.py eval --labels x.csv       news_label 대신 CSV 라벨로 평가 (LLM 대리 라벨 등, news_label 에 섞지 않는다).
 
 VM 에서는 signal-worker 컨테이너 안에서 돌린다 (DB 접속 env 가 이미 있다):
   docker compose -f docker-compose.prod.yml exec signal-worker python label.py label
@@ -19,6 +20,7 @@ VM 에서는 signal-worker 컨테이너 안에서 돌린다 (DB 접속 env 가 �
 from __future__ import annotations
 
 import argparse
+import csv
 import math
 import sys
 from typing import Any
@@ -189,6 +191,25 @@ def load_eval_rows(conn, model_version: str) -> list[dict[str, Any]]:
     ))
 
 
+def load_csv_rows(conn, model_version: str, path: str) -> list[dict[str, Any]]:
+    """news_label 대신 CSV(article_id,symbol,relevance,sentiment,event_type) 의 라벨로 평가한다.
+
+    사람이 아닌 라벨(예: LLM 대리 라벨)을 news_label 에 섞지 않고 따로 재 보기 위한 경로.
+    """
+    with open(path, newline="") as f:
+        labels = {(r["article_id"], r["symbol"]): r for r in csv.DictReader(f)}
+    sig = conn.execute(
+        """
+        SELECT article_id, symbol, collected_at, p_relevant, p_pos, p_neu, p_neg, p_event
+        FROM news_signal WHERE model_version = %s AND article_id = ANY(%s)
+        """,
+        (model_version, list({a for a, _ in labels})),
+    )
+    rows = [{**s, **{k: labels[(s["article_id"], s["symbol"])][k] for k in GATE}}
+            for s in sig if (s["article_id"], s["symbol"]) in labels]
+    return sorted(rows, key=lambda r: r["collected_at"])
+
+
 def build_sets(rows: list[dict[str, Any]]) -> dict[str, tuple[list[list[float]], list[int]]]:
     sets: dict[str, tuple[list[list[float]], list[int]]] = {f: ([], []) for f in GATE}
     for r in rows:
@@ -204,9 +225,10 @@ def build_sets(rows: list[dict[str, Any]]) -> dict[str, tuple[list[list[float]],
     return sets
 
 
-def run_eval(conn, model_version: str) -> bool:
-    sets = build_sets(load_eval_rows(conn, model_version))
-    print(f"[평가] model_version={model_version}")
+def run_eval(conn, model_version: str, labels_csv: str | None = None) -> bool:
+    rows = load_csv_rows(conn, model_version, labels_csv) if labels_csv else load_eval_rows(conn, model_version)
+    sets = build_sets(rows)
+    print(f"[평가] model_version={model_version} labels={labels_csv or 'news_label'}")
     passed = {}
     for field, (probs, y) in sets.items():
         if not y:
@@ -230,6 +252,7 @@ def main() -> None:
     ap.add_argument("cmd", choices=["label", "eval"])
     ap.add_argument("--n", type=int, default=150, help="label: 이번에 볼 쌍 수")
     ap.add_argument("--model-version", help="기본: 가장 최근에 쓰인 model_version")
+    ap.add_argument("--labels", help="eval: news_label 대신 이 CSV 의 라벨로 평가 (article_id,symbol,relevance,sentiment,event_type)")
     args = ap.parse_args()
     with psycopg.connect(dsn_from_env(), autocommit=True, row_factory=dict_row) as conn:
         mv = args.model_version or latest_model_version(conn)
@@ -238,7 +261,7 @@ def main() -> None:
         if args.cmd == "label":
             run_label(conn, mv, args.n)
         else:
-            sys.exit(0 if run_eval(conn, mv) else 1)
+            sys.exit(0 if run_eval(conn, mv, args.labels) else 1)
 
 
 if __name__ == "__main__":
