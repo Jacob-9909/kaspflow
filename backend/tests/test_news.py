@@ -111,6 +111,11 @@ class TestFilters(unittest.TestCase):
         self.assertEqual(f["count"][0], 2)
         self.assertAlmostEqual(f["weight"][0], 2 * math.exp(-300 / (P["tau_min"] * 60)), places=9)
 
+    def test_single_fresh_article_passes_default_min_weight(self):
+        # 감쇠 때문에 기사 1건의 가중치는 항상 1 미만 -> min_weight 기본값이 1 이상이면 1건으로는 신호가 안 난다
+        f = feats([item(600)], {"use_rel": 0})
+        self.assertGreaterEqual(f["weight"][0], nf.NEWS_DEFAULT_PARAMS["min_weight"])
+
     def test_market_signal_is_scaled_and_other_symbols_ignored(self):
         f = feats([item(600, symbol="MARKET"), item(600, symbol="ETHUSDT")], symbol="BTCUSDT")
         decay = math.exp(-300 / (P["tau_min"] * 60))

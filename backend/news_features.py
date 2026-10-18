@@ -45,7 +45,7 @@ NEWS_PARAM_SPECS: dict[str, tuple[float, float, float, bool]] = {
     "tau_min": (120, 1, 10_080, True),          # 감쇠 시간 상수(분)
     "buy_th": (0.3, -1.0, 1.0, False),          # news_score 가 이 값 이상이면 진입
     "sell_th": (-0.2, -1.0, 1.0, False),        # 이 값 이하이면 청산
-    "min_weight": (1.0, 0.0, 100.0, False),     # news_weight 가 이 값 미만이면 '신호 없음'
+    "min_weight": (0.5, 0.0, 100.0, False),     # news_weight 가 이 값 미만이면 '신호 없음'. 0.5 = 기사 1건이 τ·ln2(약 83분) 안
     "max_age_min": (360, 1, 10_080, True),      # 발행 후 이 시간이 지난 기사는 제외
     "use_rel": (0, 0, 1, True),                 # 1 이면 p_relevant 로 거르고(rel_th) 가중한다. 기본 끔 (위 주석)
     "rel_th": (0.5, 0.0, 1.0, False),           # p_relevant 하한 (use_rel=1 일 때만)
