@@ -1,8 +1,8 @@
 # kaspflow 뉴스·감정 시그널 파이프라인 설계서
 
-- **문서 버전**: v0.3 (v0.2 + 구현·M0 실측 반영)
+- **문서 버전**: v0.4 (v0.3 + VM 배포·대리 라벨 측정·schema 2 반영)
 - **작성일**: 2026-10-16 · @정우혁
-- **상태**: M0(맥 사전 검증)·M1·M2 코드(collector, 저장 전용 worker)·M3 코드(Laya 분류기)·M4(전략·API)·M5(대시보드) 구현 완료. **배포·라벨링·정확도 게이트(M2 실측, M3)는 아직**이고, 그 전의 백테스트 결과는 신호로 쓰지 않는다.
+- **상태 (2026-10-18)**: M0~M5 구현·VM 배포 완료, Laya 분류 가동 중(schema 2). **사람 라벨은 하지 않기로 결정**(2026-10-18, 8절 "사람 라벨 없이 진행")했고, 대리 라벨 기준으로 M3 게이트는 미달(relevance·sentiment 모두 기준 아래)인 채로 진행한다. M2 평일 기사량 실측과 M4 거래 30회 게이트는 데이터가 쌓여야 판단할 수 있다.
 
 ## 0. v0.1 → v0.2 변경 요약
 
@@ -25,7 +25,7 @@
 | 항목 | 설계서(v0.2) | 실제 | 비고 |
 | --- | --- | --- | --- |
 | signal-worker 메모리 | 2.5GB | **기본 3g** (`SIGNAL_WORKER_MEM_LIMIT`) | 맥 CPU 실측: 모델 로드 순간 최대 **~2.8GB**, 상주 ~2.1GB. 2.5GB 상한이면 로드 중 OOM 위험. VM(Linux)에서 `docker stats` 로 다시 잴 것 |
-| Laya 패키지 | 0.3.20 | **0.4.8** 로 검증·고정 | `model_version` = `laya-en@0.4.8/schema1` |
+| Laya 패키지 | 0.3.20 | **0.4.8** 로 검증·고정 | `model_version` = `laya-en@0.4.8/schema2` (2026-10-17 까지 `schema1`) |
 | 처리 시간 | 호출당 ~1초로 가정 | 맥 **중앙값 0.23s**(질문 3개 1회 호출), 첫 호출 0.26s, 최대 1.09s | VM 은 더 느리다고 보고 하한으로 읽는다. 로드 2s(가중치 캐시 후), 최초 다운로드 808MB |
 | `MARKET` 판정 | 임계값 없음("맞으면") | `LAYA_MARKET_MIN_P` 기본 **0.9** | M0 헤드라인 20건에서 `scope` 질문이 시장 전체가 아닌 기사(개별 기업·토큰화 주식)에도 0.8 안팎을 줘 과발동. 라벨 정확도 측정 전까지 보수적으로 |
 | 스키마 버전 | 환경변수 `SIGNAL_SCHEMA_VERSION` | 코드 상수 `questions.SCHEMA_VERSION` | 질문 문구와 버전이 어긋나지 않게 한 곳에 둔다. 환경변수는 쓰지 않는다 |
@@ -101,6 +101,7 @@ flowchart LR
 - **produce**: 파티션 키 `source`. 기존 producer와 같은 설정(`acks=all`, idempotence, lz4).
 - **토픽 보장**: 기동 시 `news-raw` 가 없으면 `retention.ms=14일`로 생성한다(있으면 그대로 둔다). worker가 늦게 배포되어도 14일치가 버퍼가 된다.
 - **재시도**: 소스별로 독립 루프. 실패하면 1→2→4…초, 상한 `MAX_BACKOFF=300`초(기존 producer는 30초지만 폴링 서비스라 더 길게). 한 소스의 실패가 다른 소스를 막지 않는다.
+- **오래된 항목 제외**: 발행 후 `NEWS_MAX_AGE_HOURS`(기본 48시간)가 지난 항목은 보내지 않는다(0 = 끔). 피드에 몇 달 전 글(Decrypt 팟캐스트 등)이 섞여 2026-10-17~18 수집분 248건 중 108건이 48시간 넘은 글이었다. 발행 시각이 없는 항목은 보낸다(전략이 따로 제외).
 - **제외**: Blockworks(2026-01 이후 새 기사 없음), CryptoSlate(연속 요청 제한; 나중에 15분 주기로만 검토).
 
 **수집 소스** (2026-10-05 동작 확인, Feeder 기준):
@@ -144,11 +145,11 @@ URL 정규화: 스킴·호스트 소문자화, `#fragment` 제거, `utm_*`·`fbc
 3. **Laya 분류**: 매칭된 종목마다 아래 질문 3개를 한 번의 호출로 묻는다.
 4. `news_signal` 에 기사×종목×모델 버전 단위로 upsert한다.
 
-**질문 스키마 (`schema_version = 1`)** — 모두 `choice` 유형. 예·아니오(`noul`)와 등급(`score`)은 모델 카드가 약점으로 밝히고 있어 쓰지 않는다.
+**질문 스키마 (`schema_version = 2`)** — 모두 `choice` 유형. 예·아니오(`noul`)와 등급(`score`)은 모델 카드가 약점으로 밝히고 있어 쓰지 않는다.
 
 | 키 | 선택지 (키 → 의미) | 용도 |
 | --- | --- | --- |
-| `relevance` | A: mainly about it / B: only mentions it / C: not about it | 이름만 스친 기사 거르기 |
+| `relevance` | "What is the main subject of this article?" A: {코인 이름} / B: another coin, token or company / C: the crypto market overall / D: regulation, politics or the economy. `p_relevant` = A | 이름만 스친 기사 거르기. schema 1 은 "Is this article mainly about {coin}?" (mainly / mentions / not about it) |
 | `sentiment` | A: positive / B: neutral / C: negative (대상 코인 기준) | 감정 |
 | `event_type` | A: listing_delisting / B: regulation_legal / C: hack_security / D: institutional_etf_flow / E: partnership_tech / F: macro / G: other | 이벤트 유형 (선택지 8개 이하) |
 | `scope` (미매칭 기사에만) | A: about the crypto market as a whole / B: about something else | `MARKET` 판정 |
@@ -289,7 +290,7 @@ Laya 모델 카드는 CPU 호출당 약 193~464ms를 제시한다(이 문서는 
 
 ### 모니터링
 
-- 수집 중단: `/news/health` 경과 시간이 30분을 넘으면 이상.
+- 수집 중단: `/news/health` 경과 시간이 **6시간**을 넘으면 이상. 주말 실측(2026-10-17~18)에서 신선한 기사 간격이 p50 60분, p90 211분, 최대 320분이라 처음의 30분은 오탐만 냈다. 평일 실측 뒤 다시 줄일 수 있다.
 - 처리 지연: Kafka UI에서 `news-raw` consumer lag.
 - 모델 품질: `news_label` 이 쌓일 때마다 질문별 정확도 재계산.
 - 자동배포 헬스체크는 지금처럼 backend `/health` 만 본다. 뉴스 서비스가 죽어도 시세 대시보드가 롤백되지 않게 하기 위해서다.
@@ -346,6 +347,24 @@ relevance와 sentiment가 모두 기준을 넘어야 M4로 간다. event_type은
 결론(잠정): relevance 필터(`p_relevant ≥ 0.5`)는 지금 사실상 무작위라 전략에서 빼거나 질문 문구를 고쳐야 한다(설계상 미달 시 첫 단계). sentiment 는 문구 수정 없이도 기준선에 가깝다. event_type 은 전략에서 뺀다.
 
 **조치(2026-10-17)**: `news_sentiment` 에 파라미터 `use_rel`(기본 **0**)을 추가했다. 0 이면 `p_relevant` 로 거르지도 가중하지도 않고, 종목 별칭이 매칭된 기사를 모두 같은 가중(감쇠만)으로 쓴다. 기사 1건의 가중치가 약 0.55 → 1 로 커지므로 `min_weight=1.0` 은 사실상 "신선한 기사 1건"이 된다. 거래가 너무 잦으면 `min_weight` 를 올린다. relevance 질문을 고쳐 다시 재고 나아지면 `use_rel=1` 로 켠다.
+
+#### 사람 라벨 없이 진행 (2026-10-18 결정)
+
+사람 라벨링은 하지 않는다. 게이트 판정은 대리 라벨(`eval/claude_labels_20261017.csv`)로 하고, 미달 항목은 전략에서 빼는 쪽으로 처리한다. 대리 라벨은 라벨을 붙인 쪽(Claude)의 편향이 그대로 들어가므로, 수치는 사람 라벨보다 덜 믿을 만하다는 점을 전제로 읽는다.
+
+1. **문구 수정 (설계상 미달 시 첫 단계)**: 맥에서 대리 라벨 146쌍(MARKET 제외)에 후보 문구를 직접 돌려 비교했다.
+
+   | relevance 후보 | AUC | 정확도@0.5 |
+   | --- | --- | --- |
+   | v1 (schema 1) "Is this article mainly about {coin}?" | 0.636 | 0.575 |
+   | **v2** "What is the main subject of this article?" + 4지선다 | **0.782** | **0.705** |
+   | "Would a {coin} trader care about this news?" | 0.433 | 0.425 |
+   | "How much of this article is about {coin}?" | 0.562 | 0.603 |
+   | (모델 아님) 제목에 종목 별칭이 있는가 | 0.794 | 0.760 |
+
+   sentiment 후보("good or bad for the price", "holders feel", "bullish/bearish")는 모두 현재 문구(0.664) 이하라 그대로 둔다. v2 를 schema 2 로 채택하고 VM 의 원문 전체를 다시 분류했다. 제목 규칙은 대리 라벨이 제목을 보고 붙여 유리하게 나왔을 가능성이 커서 채택하지 않았다.
+2. **결과**: relevance 는 0.80 에 여전히 못 미쳐 `use_rel=0`(전략 미사용)을 유지한다. sentiment 는 0.70 에 조금 못 미치지만 기준선보다 +0.29 높고 긍정↔부정 뒤집힘이 거의 없어 `p_pos − p_neg` 연속값으로 전략에 쓴다. event_type 은 전략에서 뺀다.
+3. **M2·M4**: 주말 이틀(2026-10-17~18) 수집분 248건 중 발행 6시간 안에 수집된 기사는 25건(약 19건/일)뿐이다. 이 속도면 거래 30회 게이트에 몇 주가 걸린다. 평일 실측 뒤 `lookback_min`·`max_age_min`·봉 간격을 다시 정한다.
 
 ### 개발 환경
 

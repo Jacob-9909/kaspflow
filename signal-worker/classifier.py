@@ -34,7 +34,7 @@ MARKET_MIN_P = float(os.getenv("LAYA_MARKET_MIN_P", "0.9"))
 
 @dataclass(frozen=True)
 class Classification:
-    p_relevant: float  # relevance 'mainly about it' 확률 (MARKET 은 scope 'whole market' 확률)
+    p_relevant: float  # relevance '주된 대상 = 이 종목' 확률 (MARKET 은 scope 'whole market' 확률)
     p_pos: float
     p_neu: float
     p_neg: float

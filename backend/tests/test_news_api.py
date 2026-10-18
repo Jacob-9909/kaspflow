@@ -89,10 +89,10 @@ class TestNewsApi(unittest.TestCase):
     # -- /news/health --
     def test_health_empty_ok_and_stale(self):
         self.assertEqual(self.client.get("/news/health").json()["status"], "empty")
-        self.add_signal("old", datetime.now(timezone.utc) - timedelta(hours=2))
+        self.add_signal("old", datetime.now(timezone.utc) - timedelta(hours=8))
         h = self.client.get("/news/health").json()
         self.assertEqual(h["status"], "stale")
-        self.assertGreater(h["age_minutes"], 100)
+        self.assertGreater(h["age_minutes"], 400)
         self.add_signal("fresh", datetime.now(timezone.utc) - timedelta(minutes=1))
         h = self.client.get("/news/health").json()
         self.assertEqual(h["status"], "ok")

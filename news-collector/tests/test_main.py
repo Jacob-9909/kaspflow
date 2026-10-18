@@ -118,6 +118,11 @@ class TestEntryToMessage(unittest.TestCase):
         msg = nc.entry_to_message(FEED, self.entries(xml)[0], NOW)
         self.assertEqual(msg["published_at"], "2026-10-16T12:00:00Z")
 
+    def test_old_pubdate_is_skipped(self):
+        xml = RSS.replace("Fri, 16 Oct 2026 11:30:00 +0900", "Mon, 05 Jan 2026 10:00:00 +0000")
+        self.assertIsNone(nc.entry_to_message(FEED, self.entries(xml)[0], NOW))
+        self.assertIsNotNone(nc.entry_to_message(FEED, self.entries(xml)[0], NOW, max_age_hours=0))  # 0 = 끔
+
     def test_body_is_truncated(self):
         xml = RSS.replace("Court to rule.", "x" * 5000)
         msg = nc.entry_to_message(FEED, self.entries(xml)[1], NOW)
@@ -142,6 +147,13 @@ class TestSeenSet(unittest.TestCase):
 
 
 class TestPoll(unittest.IsolatedAsyncioTestCase):
+    # 폴링은 실제 현재 시각으로 수집 시각을 찍는다. 고정 날짜 RSS 가 나이 필터에 걸리지 않게 끈다.
+    def setUp(self):
+        self._max_age, nc.NEWS_MAX_AGE_HOURS = nc.NEWS_MAX_AGE_HOURS, 0
+
+    def tearDown(self):
+        nc.NEWS_MAX_AGE_HOURS = self._max_age
+
     def client(self, handler):
         return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 

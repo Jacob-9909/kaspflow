@@ -5,7 +5,7 @@
  * 2) 정확도: label.py eval --save 로 남긴 가장 최근 측정 (news_eval)
  * 3) 기사 추적: 뉴스 목록에서 고른 기사 1건이 각 단계에서 어떤 값을 받았는지
  *
- * 질문 문구는 signal-worker/questions.py (schema_version 1) 와 같아야 한다. 문구를 바꾸면 여기도 바꾼다.
+ * 질문 문구는 signal-worker/questions.py (schema_version 2) 와 같아야 한다. 문구를 바꾸면 여기도 바꾼다.
  * 확률은 보정되지 않은 모델 출력이며 투자 조언이 아니다.
  */
 import type { ReactNode } from "react";
@@ -13,7 +13,7 @@ import type { NewsItem, NewsPipeline } from "../api";
 import { EVENT_LABEL } from "./NewsList";
 
 const QUESTIONS = [
-  { key: "relevance", q: "Is this article mainly about {coin}?", choices: "mainly about it / only mentions it / not about it" },
+  { key: "relevance", q: "What is the main subject of this article?", choices: "{coin} / 다른 코인·기업 / 시장 전체 / 규제·정치·경제" },
   { key: "sentiment", q: "What is the sentiment of this article toward {coin}?", choices: "positive / neutral / negative" },
   { key: "event_type", q: "What kind of event does this article report?", choices: "상장·상폐 / 규제 / 해킹 / 기관·ETF / 파트너십·기술 / 거시 / 기타" },
 ];

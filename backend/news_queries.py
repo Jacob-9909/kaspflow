@@ -14,8 +14,10 @@ from typing import Any
 
 from psycopg.rows import dict_row
 
-# 수집이 이 시간(분) 넘게 멈추면 이상으로 본다 (설계서 7절 모니터링)
-HEALTH_STALE_MINUTES = 30
+# 수집이 이 시간(분) 넘게 멈추면 이상으로 본다 (설계서 7절 모니터링).
+# 2026-10-17~18(주말) 실측: 신선한 기사 사이 간격 p50 60분, p90 211분, 최대 320분 -> 30분은 오탐뿐이라 6시간.
+# ponytail: 기사 도착 간격으로 수집 중단을 추정한다. 오탐·늦은 감지가 문제면 collector 폴링 성공 시각을 따로 남긴다.
+HEALTH_STALE_MINUTES = 360
 MARKET_SYMBOL = "MARKET"
 SIGNAL_ROW_LIMIT = 20_000  # /backtest, /features 가 한 번에 읽는 신호 상한 (공개 엔드포인트 보호)
 

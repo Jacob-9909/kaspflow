@@ -80,7 +80,7 @@ class TestQuestions(unittest.TestCase):
 
     def test_coin_name_is_in_instructions(self):
         q = qs.coin_questions("XRP")
-        self.assertIn("XRP", q["relevance"]["instructions"])
+        self.assertEqual(q["relevance"]["criteria"][qs.RELEVANCE_MAIN], "XRP")  # schema 2: 종목은 선택지 A
         self.assertIn("XRP", q["sentiment"]["instructions"])
 
     def test_event_keys_cover_options(self):

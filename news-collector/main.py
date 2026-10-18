@@ -54,6 +54,9 @@ SEEN_MAX = int(os.getenv("NEWS_SEEN_MAX", "20000"))
 MAX_BACKOFF = 300
 HTTP_TIMEOUT = 20.0
 BODY_MAX_CHARS = 2000
+# 발행 후 이 시간(시)이 지난 항목은 보내지 않는다. 피드에 섞인 몇 달 전 글(예: Decrypt 팟캐스트)이
+# 최근 뉴스 목록·라벨 표본을 차지하는 것을 막는다. 전략의 max_age_min(6h)보다 넉넉하게 둔다. 0 = 끔
+NEWS_MAX_AGE_HOURS = float(os.getenv("NEWS_MAX_AGE_HOURS", "48"))
 USER_AGENT = os.getenv("NEWS_USER_AGENT", "kaspflow-news-collector/1.0 (+https://github.com/Jacob-9909/kaspflow)")
 # 소스마다 한꺼번에 요청하지 않도록 첫 폴링을 이 간격(초)씩 어긋나게 한다.
 START_STAGGER_SECONDS = 2.0
@@ -169,8 +172,13 @@ def _published_at(entry: Any, collected_at: datetime) -> datetime | None:
     return min(published, collected_at)
 
 
-def entry_to_message(feed: Feed, entry: Any, collected_at: datetime) -> dict[str, Any] | None:
-    """feedparser 항목 1건 -> news-raw 메시지. 링크나 제목이 없으면 None."""
+def entry_to_message(
+    feed: Feed, entry: Any, collected_at: datetime, max_age_hours: float | None = None
+) -> dict[str, Any] | None:
+    """feedparser 항목 1건 -> news-raw 메시지. 링크·제목이 없거나 발행 후 max_age_hours 가 지났으면 None.
+
+    발행 시각이 없는 항목은 오래됐는지 알 수 없어 보낸다 (전략은 이런 기사를 쓰지 않는다).
+    """
     url = (entry.get("link") or "").strip()
     title = strip_html(entry.get("title"))
     if not url or not title:
@@ -182,6 +190,10 @@ def entry_to_message(feed: Feed, entry: Any, collected_at: datetime) -> dict[str
     body = strip_html(raw_body)[:BODY_MAX_CHARS]
 
     published = _published_at(entry, collected_at)
+    if max_age_hours is None:
+        max_age_hours = NEWS_MAX_AGE_HOURS
+    if published and max_age_hours > 0 and collected_at - published > timedelta(hours=max_age_hours):
+        return None
     return {
         "article_id": article_id(url),
         "source": feed.source,

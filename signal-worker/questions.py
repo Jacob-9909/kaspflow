@@ -1,5 +1,5 @@
 """
-Laya 질문 스키마 (schema_version = 1)
+Laya 질문 스키마 (schema_version = 2)
 ============================================================
 모든 질문을 choice 유형으로 묻는다. 예·아니오(noul)와 등급(score)은 모델 카드가 약점으로 밝혀 쓰지 않는다.
 선택지 키는 A/B/C..., 설명은 영어, 설명은 짧게 쓴다 (선택지들이 질문당 고정 토큰 예산을 나눠 쓰므로).
@@ -11,9 +11,13 @@ from __future__ import annotations
 
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+# 버전 기록
+#   1: relevance = "Is this article mainly about {coin}?" (mainly / mentions / not about it)
+#   2: relevance 를 "주된 대상은 무엇인가" 다지선다로 변경 (2026-10-18). 대리 라벨 146쌍에서
+#      이진 정확도 0.575 -> 0.705, AUC 0.64 -> 0.78. sentiment·event_type·scope 는 그대로.
 
-# relevance 선택지 키 -> 의미. 'A' 가 '주 대상' (p_relevant)
+# relevance 선택지 키 -> 의미. 'A'(= 그 종목) 가 '주 대상' (p_relevant)
 RELEVANCE_MAIN = "A"
 # sentiment 선택지 키 -> 컬럼
 SENTIMENT_KEYS = {"A": "p_pos", "B": "p_neu", "C": "p_neg"}
@@ -44,8 +48,13 @@ _EVENT_CRITERIA = {
 def _relevance(name: str) -> dict[str, Any]:
     return {
         "type": "choice",
-        "instructions": f"Is this article mainly about {name}?",
-        "criteria": {"A": "mainly about it", "B": "only mentions it", "C": "not about it"},
+        "instructions": "What is the main subject of this article?",
+        "criteria": {
+            "A": name,
+            "B": "another coin, token or company",
+            "C": "the crypto market overall",
+            "D": "regulation, politics or the economy",
+        },
     }
 
 
