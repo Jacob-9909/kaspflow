@@ -72,6 +72,25 @@ const fmt = (n: number, digits = 2) =>
     maximumFractionDigits: digits,
   });
 
+/** 지금 봉의 news_score 와 news_sentiment 기본 규칙상 상태 (진입 조건 / 청산 조건 / 관망 / 신호 없음) */
+function NewsNowCard({ series, d }: { series: NewsScorePoint[] | null; d: Record<string, number> }) {
+  const last = series?.[series.length - 1];
+  const rule = `진입 ≥ ${d.buy_th} · 청산 ≤ ${d.sell_th} · 신호는 감쇠 가중치 ≥ ${d.min_weight} 일 때만`;
+  if (!last || last.weight < d.min_weight) {
+    return <MetricCard label="뉴스 점수 (지금)" value="신호 없음" title={`최근 신선한 기사가 없음. ${rule}`} />;
+  }
+  const state = last.score >= d.buy_th ? "진입 조건" : last.score <= d.sell_th ? "청산 조건" : "관망";
+  const tone = last.score >= d.buy_th ? "up" : last.score <= d.sell_th ? "down" : undefined;
+  return (
+    <MetricCard
+      label="뉴스 점수 (지금)"
+      value={`${last.score >= 0 ? "+" : ""}${last.score.toFixed(2)} · ${state}`}
+      tone={tone}
+      title={`기사 ${last.count}건 · 가중치 ${last.weight.toFixed(2)}. ${rule}. 투자 조언이 아니다.`}
+    />
+  );
+}
+
 // "몇 초 전" 형태의 상대 시각
 function ago(ms: number): string {
   const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -85,14 +104,16 @@ function MetricCard({
   label,
   value,
   tone,
+  title,
 }: {
   label: string;
   value: string;
   tone?: "up" | "down";
+  title?: string;
 }) {
   const cls = tone ? `metric metric--${tone}` : "metric";
   return (
-    <div className={cls}>
+    <div className={cls} title={title}>
       <span className="metric__label">{label}</span>
       <span className={`metric__value${tone ? ` ${tone}` : ""}`}>{value}</span>
     </div>
@@ -496,6 +517,7 @@ export default function App() {
             <MetricCard label="종가 (close)" value={fmt(latest.close)} tone={tone} />
             <MetricCard label="거래량 (volume)" value={fmt(latest.volume, 4)} />
             <MetricCard label="체결 수 (trades)" value={fmt(latest.trade_count, 0)} />
+            {newsUsable && pipeline && <NewsNowCard series={newsScore} d={pipeline.strategy_defaults} />}
           </div>
 
           <div className="chart-card">
