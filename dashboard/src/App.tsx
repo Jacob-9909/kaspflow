@@ -534,9 +534,9 @@ export default function App() {
             {newsUsable && newsScore && newsScore.length > 0 && (
               <>
                 <div className="chart-status chart-status--sub">
-                  <span>news_score (−1 악재 ~ +1 호재 · 봉 마감 시점까지 수집된 기사의 감쇠 가중 평균)</span>
+                  <span>news_score (−1 악재 ~ +1 호재 · 봉 마감 시점까지 수집된 기사의 감쇠 가중 평균 · 선이 끊긴 곳은 신호 없음)</span>
                 </div>
-                <NewsScoreChart series={newsScore} range={timeRange} viewKey={viewKey} />
+                <NewsScoreChart series={newsScore} range={timeRange} viewKey={viewKey} d={pipeline?.strategy_defaults} />
               </>
             )}
             <div className="chart-status">

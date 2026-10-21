@@ -6,6 +6,9 @@
  *   0 이 중립이고, 위(초록)는 호재 쪽, 아래(빨강)는 악재 쪽이다.
  *   값은 백테스트 전략(news_sentiment)이 쓰는 것과 같은 피처라서, 매수/매도 마커가 왜 거기 찍혔는지 눈으로 확인할 수 있다.
  *
+ * 전략 기본값(d)을 받으면 진입(buy_th)·청산(sell_th) 기준선을 긋고, 가중치가 min_weight 미만인 봉(= 전략상 '신호 없음')은
+ * 선을 끊는다. 신호가 없는 봉을 0 으로 이어 그리면 '중립 뉴스'처럼 보이기 때문이다.
+ *
  * [시간축]
  *   메인 캔들 차트가 보내 주는 '보이는 시간 구간'을 그대로 따라간다 (방향은 메인 -> 보조 한쪽뿐이라 되돌이 루프가 없다).
  *   가격축 폭(minimumWidth)을 메인 차트와 같게 맞춰 두 차트의 시간축이 세로로 정렬된다.
@@ -27,9 +30,11 @@ interface Props {
   range: { from: number; to: number } | null;
   // 다른 차트(심볼/간격)로 바뀌면 시간축을 처음부터 다시 맞춘다.
   viewKey: string;
+  // news_sentiment 기본 파라미터 (/news/pipeline 의 strategy_defaults). 없으면 기준선·끊김 없이 그린다.
+  d?: Record<string, number>;
 }
 
-export function NewsScoreChart({ series, range, viewKey }: Props) {
+export function NewsScoreChart({ series, range, viewKey, d }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const lineRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -72,8 +77,24 @@ export function NewsScoreChart({ series, range, viewKey }: Props) {
   useEffect(() => {
     const line = lineRef.current;
     if (!line) return;
-    line.setData(series.map((p) => ({ time: p.time as UTCTimestamp, value: p.score })));
-  }, [series, viewKey]);
+    const minW = d?.min_weight ?? 0;
+    line.setData(
+      series.map((p) =>
+        p.weight >= minW ? { time: p.time as UTCTimestamp, value: p.score } : { time: p.time as UTCTimestamp },
+      ),
+    );
+  }, [series, viewKey, d?.min_weight]);
+
+  // 진입·청산 기준선
+  useEffect(() => {
+    const line = lineRef.current;
+    if (!line || d?.buy_th === undefined || d?.sell_th === undefined) return;
+    const lines = [
+      line.createPriceLine({ price: d.buy_th, color: "#26a69a", lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: "진입" }),
+      line.createPriceLine({ price: d.sell_th, color: "#ef5350", lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: "청산" }),
+    ];
+    return () => lines.forEach((l) => line.removePriceLine(l));
+  }, [d?.buy_th, d?.sell_th]);
 
   // 메인 차트의 시간 구간을 따라간다
   useEffect(() => {
