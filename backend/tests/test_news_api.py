@@ -117,6 +117,9 @@ class TestNewsApi(unittest.TestCase):
         self.assertEqual((btc["n"], btc["positive"], btc["neutral"], btc["negative"], btc["fresh"]), (2, 1, 1, 0, 2))
         self.assertEqual([(e["field"], e["acc"]) for e in b["eval"]], [("sentiment", 0.67)])
         self.assertEqual(b["strategy_defaults"]["use_rel"], 0)
+        # 처리 지연은 기사 단위 (p1 의 BTC·ETH 신호는 1건): 1시간, 2시간 -> 중앙값 1.5시간
+        self.assertEqual(b["lag_24h"]["n"], 2)
+        self.assertAlmostEqual(b["lag_24h"]["p50_s"], 5400, delta=5)
 
     # -- /news --
     def test_news_list_newest_first_with_sentiment_and_filters(self):

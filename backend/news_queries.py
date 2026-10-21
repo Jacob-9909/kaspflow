@@ -165,6 +165,21 @@ def pipeline(conn, hours: int) -> dict[str, Any]:
             {"mv": mv, "h": hours},
         )
         events = list(cur.fetchall())
+        # 처리 지연: 수집 -> 신호 저장 (최근 24시간). 소스를 늘렸을 때 Laya 가 밀리는지 본다.
+        # 기사당 종목이 여럿이면 첫 신호 기준. --backfill 로 늦게 채운 행도 섞이므로 24시간으로 좁힌다.
+        cur.execute(
+            """
+            SELECT count(*) AS n,
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY lag) AS p50,
+                   percentile_cont(0.9) WITHIN GROUP (ORDER BY lag) AS p90
+            FROM (SELECT extract(epoch FROM min(created_at) - min(collected_at)) AS lag
+                  FROM news_signal
+                  WHERE model_version = %(mv)s AND collected_at >= now() - interval '24 hours'
+                  GROUP BY article_id) t
+            """,
+            {"mv": mv},
+        )
+        lag = cur.fetchone()
         evals: list[dict[str, Any]] = []
         if mv is not None and _has_table(cur, "news_eval"):
             cur.execute(
@@ -192,6 +207,11 @@ def pipeline(conn, hours: int) -> dict[str, Any]:
         "sources": sources,
         "symbols": symbols,
         "events": events,
+        "lag_24h": {
+            "n": lag["n"],
+            "p50_s": None if lag["p50"] is None else round(float(lag["p50"])),
+            "p90_s": None if lag["p90"] is None else round(float(lag["p90"])),
+        },
         "eval": evals,
     }
 

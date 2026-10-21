@@ -22,6 +22,7 @@ const FIELD_LABEL: Record<string, string> = { relevance: "관련도", sentiment:
 
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? "-" : `${Math.round(v * 100)}%`);
 const num = (v: number) => v.toLocaleString("ko-KR");
+const dur = (s: number) => (s < 60 ? `${s}초` : s < 3600 ? `${Math.round(s / 60)}분` : `${(s / 3600).toFixed(1)}시간`);
 
 function Bar({ value, tone }: { value: number | null; tone?: "up" | "down" | "neutral" }) {
   return (
@@ -133,6 +134,11 @@ export function LayaFlow({ p, traced, onCloseTrace }: { p: NewsPipeline; traced:
 
         <Stage step={3} title="Laya 질문">
           <p className="muted">종목마다 아래 3개를 한 번의 호출로 묻고 선택지별 확률을 받는다.</p>
+          {p.lag_24h.p50_s !== null && (
+            <p className="muted" title={`최근 24시간 기사 ${p.lag_24h.n}건, 수집 -> 신호 저장`}>
+              처리 지연 중앙값 {dur(p.lag_24h.p50_s)} · 상위 10% {dur(p.lag_24h.p90_s ?? 0)}
+            </p>
+          )}
           <ol className="laya__questions">
             {QUESTIONS.map((q) => (
               <li key={q.key}>

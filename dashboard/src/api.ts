@@ -315,6 +315,7 @@ export interface NewsPipeline {
     fresh: number; // 발행 6시간 안에 수집된 신호 (전략 max_age 기본값 기준)
   }[];
   events: { event_type: string; n: number }[];
+  lag_24h: { n: number; p50_s: number | null; p90_s: number | null }; // 수집 -> 신호 저장 지연 (초)
   eval: {
     run_at: string;
     labels: string; // 'news_label' = 사람 라벨, 그 외 = CSV 파일 이름(대리 라벨)

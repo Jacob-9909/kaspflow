@@ -24,6 +24,12 @@ on:
     branches: [main]
   workflow_dispatch: {} # Actions 탭에서 수동 실행 가능
 
+# 연달아 push 하면 여러 실행이 같은 :latest 를 동시에 밀어 GHCR 이 400 을 준다 (2026-10-21).
+# 자동배포는 main 의 최신 커밋만 배포하므로 앞선 실행은 취소해도 된다.
+concurrency:
+  group: publish-images-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
