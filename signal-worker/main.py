@@ -82,8 +82,15 @@ def process_message(
 
     if classifier is None:
         return "stored" if inserted else "duplicate"
-    if not inserted and store.has_signal(msg["article_id"], classifier.model_version):
-        return "duplicate"
+    if not inserted:
+        if store.has_signal(msg["article_id"], classifier.model_version):
+            return "duplicate"
+        # 신호 없는 중복: 종목 매칭이 있으면 지난 분류가 실패한 것이니 다시 분류한다.
+        # 매칭이 없으면 '시장 전체 아님'으로 이미 버려진 기사일 가능성이 커서 다시 묻지 않는다.
+        # collector 가 재시작마다 48시간치를 다시 보내 이런 기사가 Laya 를 수백 번 다시 타던 낭비 (2026-10-21).
+        # ponytail: 시장 전체 질문 도중 실패한 기사는 여기서 다시 안 묻는다 -> --backfill 로 채운다.
+        if not match_symbols(f"{msg['title']}\n{msg['body'] or ''}", book):
+            return "duplicate"
 
     symbols = classify_article(msg["article_id"], msg["title"], msg["body"], collected_at, store, book, classifier)
     store.commit()

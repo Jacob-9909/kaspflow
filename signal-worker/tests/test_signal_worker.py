@@ -248,6 +248,10 @@ class TestWithPostgres(unittest.TestCase):
         self.assertEqual(no.calls, [("market", "the overall crypto market")])
         self.assertEqual(len(self.rows("SELECT 1 FROM news_signal")), 0)
 
+        # 같은 기사가 다시 와도 (collector 재시작) 시장 전체 질문을 다시 하지 않는다
+        self.assertEqual(self.run_msg(msg("a1", "Solana copycat soars"), no), "duplicate")
+        self.assertEqual(len(no.calls), 1)
+
         yes = FakeClassifier(market=True)
         self.assertEqual(self.run_msg(msg("a2", "Crypto market slides on Fed fears"), yes), "classified")
         rows = self.rows("SELECT symbol, p_relevant, event_type FROM news_signal")
