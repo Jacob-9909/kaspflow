@@ -80,6 +80,13 @@ DEFAULT_FEEDS: list[Feed] = [
     Feed("theblock", "https://www.theblock.co/rss.xml"),
     Feed("decrypt", "https://decrypt.co/feed"),
     Feed("bitcoinmagazine", "https://bitcoinmagazine.com/feed"),
+    # 2026-10-21 추가: 거래 30회 게이트까지 기사량을 늘리려고. 특히 u.today 는 XRP 기사가 많다(최근 92건 중 37건).
+    # 가격 전망·클릭 유도형 기사가 섞인 소스라 소스별 성과는 따로 본다 (news_raw.source).
+    Feed("utoday", "https://u.today/rss"),
+    Feed("cryptopotato", "https://cryptopotato.com/feed/"),
+    Feed("coingape", "https://coingape.com/feed/"),
+    Feed("cryptonews", "https://cryptonews.com/news/feed/"),
+    Feed("bitcoincom", "https://news.bitcoin.com/feed/"),
 ]
 
 

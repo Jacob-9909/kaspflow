@@ -92,7 +92,8 @@ class TestParseFeeds(unittest.TestCase):
 
     def test_defaults_cover_documented_sources(self):
         self.assertEqual({f.source for f in nc.DEFAULT_FEEDS},
-                         {"coindesk", "cointelegraph", "theblock", "decrypt", "bitcoinmagazine"})
+                         {"coindesk", "cointelegraph", "theblock", "decrypt", "bitcoinmagazine",
+                          "utoday", "cryptopotato", "coingape", "cryptonews", "bitcoincom"})
 
 
 class TestEntryToMessage(unittest.TestCase):

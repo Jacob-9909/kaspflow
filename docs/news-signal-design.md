@@ -114,6 +114,11 @@ flowchart LR
 | theblock | `https://www.theblock.co/rss.xml` | 약 20건 |
 | decrypt | `https://decrypt.co/feed` | 요약 포함 |
 | bitcoinmagazine | `https://bitcoinmagazine.com/feed` | 최근 10건 |
+| utoday | `https://u.today/rss` | 2026-10-21 추가. 최근 92건, 하루 약 16건. **XRP 기사가 많다**(37/92). 가격 전망형 기사 많음 |
+| cryptopotato | `https://cryptopotato.com/feed/` | 2026-10-21 추가. 하루 약 19건 |
+| coingape | `https://coingape.com/feed/` | 2026-10-21 추가. 하루 약 15건. 가격 전망형 기사 많음 |
+| cryptonews | `https://cryptonews.com/news/feed/` | 2026-10-21 추가. 하루 약 11건 |
+| bitcoincom | `https://news.bitcoin.com/feed/` | 2026-10-21 추가. 최근 10건(하루 약 10건) |
 
 같은 사이트의 여러 피드는 같은 `source` 이름을 쓰고, URL 정규화 해시로 중복이 걸러진다.
 
