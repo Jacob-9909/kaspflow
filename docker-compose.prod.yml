@@ -14,7 +14,7 @@
 #
 # .env 에 필요한 값 (VM에만 두고 git 에는 커밋 금지):
 #   IMAGE_PREFIX=ghcr.io/<owner>/<repo>       예: ghcr.io/jacob-9909/kaspflow
-#   IMAGE_TAG=latest                          (또는 sha-xxxxxxx)
+#   IMAGE_TAG=latest                          (손으로 돌릴 때. 자동배포는 커밋별 sha-xxxxxxx 를 넘긴다)
 #   KAFKA_TOPIC=crypto-trades
 #   SYMBOLS=BTCUSDT,ETHUSDT,XRPUSDT
 #   (선택) NEWS_TOPIC / NEWS_POLL_SECONDS / NEWS_FEEDS  — news-collector, 기본값 있음

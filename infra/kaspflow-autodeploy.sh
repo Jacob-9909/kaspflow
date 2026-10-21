@@ -14,6 +14,10 @@
 #   3) git pull → docker compose pull → up -d
 #   4) 헬스체크(backend /health) 실패 시 직전 커밋으로 롤백
 #
+# 이미지 태그: 커밋마다 publish-images 가 만드는 :sha-<7자리> 를 쓴다 (IMAGE_TAG 를 셸에서 넘기면
+#   .env 의 값보다 우선한다). :latest 로 배포하면 롤백해도 새 이미지가 그대로 떠 있어서
+#   롤백이 코드(compose 파일)만 되돌리고 이미지는 못 되돌린다 (2026-10-17 장애).
+#
 # 설정: 아래 변수는 환경(예: systemd EnvironmentFile)이나 기본값으로 결정된다.
 #   REPO_DIR   : repo 루트 (docker-compose.prod.yml 이 있는 곳)
 #   GH_REPO    : "<owner>/<repo>" (CI 게이트 조회용). 비우면 게이트 건너뜀.
@@ -78,6 +82,9 @@ git pull -q --ff-only origin "$BRANCH" || { log "❌ pull 실패(로컬 변경 �
 
 # ── 3) 배포 (이미지 pull → 기동) ────────────────────────────────
 deploy_and_wait() {
+  # $1 = 배포할 커밋. 그 커밋의 이미지(:sha-xxxxxxx)를 띄운다.
+  # ponytail: 태그는 이 스크립트 안에서만 정해진다. 손으로 docker compose 를 돌리면 .env 의 IMAGE_TAG(기본 latest)를 쓴다.
+  export IMAGE_TAG="sha-${1:0:7}"
   # .env 는 REPO_DIR 에 있어야 한다 (compose가 자동으로 읽음)
   docker compose -f "$COMPOSE" pull -q 2>/dev/null || docker compose -f "$COMPOSE" pull || return 1
   docker compose -f "$COMPOSE" up -d || return 1
@@ -89,15 +96,15 @@ deploy_and_wait() {
   return 1
 }
 
-if deploy_and_wait; then
-  log "✅ 배포 완료: $(git log --oneline -1)"
+if deploy_and_wait "$REMOTE"; then
+  log "✅ 배포 완료: $(git log --oneline -1) (이미지 sha-${REMOTE:0:7})"
   exit 0
 fi
 
 # ── 4) 실패 시 롤백 ─────────────────────────────────────────────
 log "❌ 배포 후 헬스 실패 — ${LOCAL:0:7} 로 롤백"
 git reset -q --hard "$LOCAL"
-if deploy_and_wait; then
+if deploy_and_wait "$LOCAL"; then
   log "↩️  롤백 성공 — ${LOCAL:0:7} 복구됨. ${REMOTE:0:7} 은 배포되지 않았다."
 else
   log "🚨 롤백 후에도 헬스 실패 — 사람이 봐야 한다: docker compose -f $COMPOSE logs --tail=100"

@@ -93,7 +93,7 @@ sudo -u postgres psql -d crypto -c "\dt"    # ohlc_1m, price_alert 보이면 성
 cp .env.prod.example .env
 nano .env
 #   IMAGE_PREFIX=ghcr.io/<owner>/kaspflow   (소문자!)
-#   IMAGE_TAG=latest
+#   IMAGE_TAG=latest   (자동배포는 커밋별 sha-xxxxxxx 를 직접 넘긴다. 이 값은 손으로 compose 돌릴 때만 쓰임)
 #   POSTGRES_HOST=host.docker.internal
 #   POSTGRES_PASSWORD=<2번에서 정한 그 비번>
 chmod 600 .env
