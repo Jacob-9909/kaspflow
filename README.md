@@ -1,284 +1,75 @@
-# 실시간 암호화폐 시세 대시보드
+# kaspflow
 
-거래소(Binance) WebSocket 체결 스트림을 **Kafka → Spark Structured Streaming → PostgreSQL → FastAPI → React(Vite)** 로 흘려보내는 엔드투엔드 실시간 데이터 파이프라인 학습 프로젝트입니다. 대시보드는 TradingView의 `lightweight-charts` 로 캔들차트를 그립니다.
+[![Backend CI](https://github.com/Jacob-9909/kaspflow/actions/workflows/ci-backend.yml/badge.svg)](https://github.com/Jacob-9909/kaspflow/actions/workflows/ci-backend.yml)
+[![Frontend CI](https://github.com/Jacob-9909/kaspflow/actions/workflows/ci-frontend.yml/badge.svg)](https://github.com/Jacob-9909/kaspflow/actions/workflows/ci-frontend.yml)
 
-설계 배경과 의사결정은 `docs/design.md`, 구성도는 `docs/architecture.md` 를 참고하세요.
+Binance 체결 스트림을 Kafka와 Spark Structured Streaming으로 1분봉 집계해 실시간 캔들 차트로 보여주는 데이터 파이프라인입니다.
 
----
-
-## 🗺️ 어디서부터 봐야 하나요? (읽는 순서)
-
-데이터가 흐르는 순서대로 코드를 따라가면 파이프라인이 한눈에 이해됩니다.
-각 파일 맨 위에는 "이 파일이 하는 일"과 "읽는 순서 추천" 주석이 있습니다.
-
-| 순서 | 파일 | 무슨 일을 하나 | 핵심 개념 |
-| --- | --- | --- | --- |
-| 0️⃣ | `docker-compose.yml` | 전체 서비스가 어떻게 연결되는지 지도 | 서비스 의존성, 포트, 네트워크 |
-| 1️⃣ | `producer/main.py` | 거래소 WebSocket → Kafka **produce** | 생산자(Producer), 토픽, 파티션 키 |
-| 2️⃣ | `spark/jobs/ohlc_stream.py` | Kafka **구독** → 1분봉 집계 → DB 저장 | 소비자(Consumer), 윈도우, 워터마크, 체크포인트 |
-| 3️⃣ | `db/init.sql` | 집계 결과가 저장되는 테이블 구조 | 스키마, upsert 충돌 키 |
-| 4️⃣ | `backend/app.py` | DB 조회 → JSON API | REST, 커넥션 풀 |
-| 5️⃣ | `dashboard/src/App.tsx` | API 호출 → 실시간 캔들차트 | 시각화, 폴링, React 상태 |
-
-> 💡 **처음이라면**: `docker-compose.yml`(지도) → `producer`(입구) → `spark`(핵심) 순서만 봐도 Kafka와 Spark의 생산자–소비자 관계가 잡힙니다.
-
----
-
-## 🏗️ 아키텍처
+- 데모: https://bit-kaspflow.duckdns.org
 
 ```
-거래소 WS ──> Producer ──> Kafka ──> Spark Streaming ──> PostgreSQL ──> FastAPI ──> React(Vite)
- (Binance)   (produce)  (crypto-   (1분봉 OHLC 집계)     (저장)        (조회 API)   (차트/nginx)
-                         trades)
-                            │
-                            └─(모니터링)─> Kafka UI
+Binance WS ─▶ Producer ─▶ Kafka ─▶ Spark Streaming ─▶ PostgreSQL ─▶ FastAPI ─▶ React
+                                   (1분봉 OHLC 집계)
 ```
 
-아래 접속 주소는 **로컬 개발**(`docker compose up`) 기준입니다. 프론트엔드 코드는 URL을 하드코딩하지 않고 상대경로(`/api`)로 호출하므로, 어디에 배포하든 "접속한 그 주소"를 그대로 씁니다.
+## 주요 기능
 
-| 서비스 | 포트 (호스트) | 로컬 접속 |
-| --- | --- | --- |
-| Kafka UI | 8080 | http://localhost:8080 |
-| Backend API (문서) | 8000 | http://localhost:8000/docs |
-| Dashboard | 8501 | http://localhost:8501 |
-| Kafka (외부 접속용) | 19092 | `localhost:19092` |
-| PostgreSQL | 5432 | `localhost:5432` (user/pw/db = crypto) |
+- **실시간 수집과 집계**: 심볼을 파티션 키로 써서 순서를 보장하고, 워터마크와 체크포인트로 지연 이벤트와 재시작을 처리합니다. 결과는 `(symbol, minute)` 기준 upsert로 저장합니다.
+- **캔들 차트**: `lightweight-charts`로 1분~1일 간격 캔들을 그립니다.
+- **백테스트**: SMA, MACD, RSI, 볼린저 밴드, OBV 전략 신호를 차트에 표시하고 수익률과 거래 내역을 계산합니다.
+- **뉴스 시그널 (선택)**: 코인 매체 RSS를 수집해 종목별 감정 점수로 바꾸고 백테스트 입력으로 씁니다. [설계 문서](docs/news-signal-design.md)
 
-### 🌐 프로덕션 (Oracle VM 배포)
-- **대시보드/API**: https://bit-kaspflow.duckdns.org  (Caddy가 자동 HTTPS 종단, `/api/*` → backend)
-  - Caddy 리버스 프록시 설정은 `infra/Caddyfile` 참고. 한 도메인에서 프론트(`/`)와 API(`/api`)를 함께 서빙하므로 CORS/mixed-content 문제가 없습니다.
-  - 도메인은 DuckDNS(무료 DDNS) + VM cron(5분 주기 IP 갱신)로 유지됩니다.
-- 컨테이너가 직접 노출하는 포트(8501/8090 등)로도 접근 가능하지만, 상시 접속은 위 HTTPS 주소를 쓰세요.
+> 백테스트 결과는 슬리피지를 반영하지 않으며 투자 조언이 아닙니다.
 
----
+## 기술 스택
 
-## 🚀 실행 방법
+- Streaming: Apache Kafka, Spark 3.5 Structured Streaming
+- Backend: Python, FastAPI, PostgreSQL
+- Frontend: React, Vite, TypeScript, lightweight-charts
+- Infra: Docker Compose, GitHub Actions, GHCR, Oracle Cloud VM, Caddy
 
-### 사전 준비
-- Docker Desktop (또는 Docker Engine) + `docker compose`
-- 인터넷 연결 (거래소 WebSocket + Spark 커넥터 최초 다운로드)
+## 시작하기
 
-### 1. 환경 변수 파일 준비
+Docker와 Docker Compose가 필요합니다.
+
 ```bash
 cp .env.example .env
-```
-기본값 그대로도 동작합니다. 수집 심볼을 바꾸려면 `.env` 의 `SYMBOLS` 를 수정하세요.
-
-### 2. 단계별로 띄워보기 (권장 — 학습용)
-
-**M1. 인프라만 먼저 확인**
-```bash
-docker compose up kafka kafka-ui
-```
-→ http://localhost:8080 (Kafka UI)가 뜨면 성공.
-
-**M2. 수집 추가 — Producer가 메시지를 넣는지 확인**
-```bash
-docker compose up -d kafka kafka-ui
-docker compose up producer
-```
-→ Kafka UI의 Topics → `crypto-trades` 에서 실시간 메시지가 쌓이는지 확인.
-
-**M3~M5. 전체 파이프라인 기동**
-```bash
 docker compose up --build
 ```
-→ 잠시(1~2분) 기다린 뒤:
-- Dashboard: http://localhost:8501
-- API 문서: http://localhost:8000/docs
 
-> ⏳ **Spark 최초 실행은 느립니다**: `--packages` 로 Kafka 커넥터/JDBC 드라이버를 처음 내려받기 때문입니다. 로그에 `스트리밍 시작` 이 뜨면 정상입니다.
+1~2분 뒤 다음 주소에서 확인할 수 있습니다. Spark 첫 실행은 커넥터를 내려받느라 더 걸립니다.
 
-### 3. 종료
-```bash
-docker compose down        # 컨테이너만 정리 (DB 데이터 유지)
-docker compose down -v      # 볼륨까지 삭제 (DB 초기화 — 스키마 바꿨을 때)
+| 서비스 | 주소 |
+|---|---|
+| Dashboard | http://localhost:8501 |
+| API docs | http://localhost:8000/docs |
+| Kafka UI | http://localhost:8080 |
+
+수집 심볼은 `.env`의 `SYMBOLS`로 바꿉니다. 종료는 `docker compose down`, DB까지 초기화하려면 `docker compose down -v`입니다.
+
+## 프로젝트 구조
+
+```
+producer/         Binance WebSocket → Kafka
+spark/            Kafka → 1분봉 집계 → PostgreSQL
+db/               테이블 스키마
+backend/          REST API, 백테스트 엔진
+dashboard/        React 대시보드
+news-collector/   RSS → Kafka
+signal-worker/    뉴스 종목 매칭과 감정 분류
+infra/            Caddy, 배포 스크립트
 ```
 
-### 4. (선택) 프론트엔드만 로컬에서 개발
-차트 UI를 빠르게 고치고 싶다면 대시보드만 로컬 dev 서버로 띄울 수 있습니다.
-백엔드는 compose로 켜둔 상태여야 합니다 (`localhost:8000`).
-```bash
-cd dashboard
-npm install
-npm run dev        # http://localhost:5173 (핫 리로드)
-```
-`vite.config.ts` 의 프록시가 `/api` 요청을 `localhost:8000` 으로 전달하므로 CORS 설정이 필요 없습니다.
+처음 읽는다면 `docker-compose.yml` → `producer/main.py` → `spark/jobs/ohlc_stream.py` 순서를 추천합니다.
 
----
-
-## 🔍 동작 확인 체크리스트
-
-| 확인 대상 | 방법 | 기대 결과 |
-| --- | --- | --- |
-| Kafka 기동 | `docker compose ps` | kafka 가 `healthy` |
-| 메시지 수집 | Kafka UI → `crypto-trades` | 메시지 개수가 증가 |
-| Spark 집계 | `docker compose logs -f spark` | `[batch N] ... rows upsert 완료` |
-| DB 적재 | `docker compose exec postgres psql -U crypto -c "SELECT count(*) FROM ohlc_1m;"` | 행 수 증가 |
-| API | http://localhost:8000/ohlc?symbol=BTCUSDT | JSON 캔들 배열 |
-| 대시보드 | http://localhost:8501 | 캔들차트 표시 |
-| 백테스트 | http://localhost:8000/backtest?symbol=BTCUSDT&interval=5m&strategy=macd | `markers`(매수/매도), `metrics` JSON |
-
----
-
-## 📊 백테스트 (midas-touch 전략 이식)
-
-대시보드의 **백테스트** 패널을 켜면 선택한 **봉 간격**(상단 `간격`: 1m/5m/15m/30m/1h/4h/1d)마다 전략 신호를 평가하고, 캔들 차트에 **매수(▲, 초록) / 매도(▼, 빨강 + 손익%)** 를 찍고 성과 지표·거래 목록을 보여줍니다.
-
-- 전략: SMA 교차 · MACD · RSI · 볼린저 밴드 · OBV · 복합(하위 5개 다수결). 로직과 기본 파라미터는 [midas-touch](https://github.com/Jacob-9909/midas-touch) `stock_analyzer.py` 와 동일하며, 같은 데이터에서 신호·체결이 일치함을 확인했습니다.
-- 리스크/비용: 수수료(편도 bp), 손절 · 익절 · 추격손절(%). 리스크 청산이 신호 청산보다 우선합니다.
-- 코인용 조정: 소수 수량 전액 매수, 수수료 기본 10bp, 손절·익절·추격은 기본 꺼짐(midas 기본값은 일봉 기준이라 분봉엔 과함), 샤프 연환산은 봉 간격 기준.
-- 한계: 기본은 신호 봉의 종가로 체결(슬리피지 미반영)이라 결과가 낙관적입니다. `fill=next_open` 쿼리로 다음 봉 시가 체결을 고를 수 있습니다(판단은 종가, 체결만 다음 시가). 집계 중인 마지막 봉은 제외합니다. midas 기본 파라미터는 일봉 주식용이라 분봉 코인에서는 손실이 날 수 있습니다. **투자 조언이 아닙니다.**
-- API: `GET /backtest` (파라미터는 `/docs` 참고), `GET /backtest/strategies`. 코드는 `backend/backtest.py`, 테스트는 `cd backend && python -m unittest discover -s tests`.
-
-### 과거 데이터 일회성 백필
-
-Producer 를 켠 시점부터만 쌓이므로 과거 봉은 Binance 공개 klines 에서 **한 번** 채웁니다. (`scripts/backfill_klines.py`, Spark 봉과 OHLC·거래량·체결 수가 같은 정의 — 서버 봉 116분을 대조해 전부 일치 확인)
+## 테스트
 
 ```bash
-# 1) DRY-RUN (기본): DB 는 읽기만 하고 '몇 행이 새로 들어갈지'만 출력
-docker compose -f docker-compose.prod.yml exec -T backend python - --days 30 < scripts/backfill_klines.py
-# 2) 확인 후 적재
-docker compose -f docker-compose.prod.yml exec -T backend python - --days 30 --apply < scripts/backfill_klines.py
+cd backend && python -m unittest discover -s tests
 ```
 
-- `ON CONFLICT DO NOTHING` 이라 기존(Spark) 행은 덮어쓰지 않고, 여러 번 돌려도 같은 결과입니다. 심볼 단위 트랜잭션이라 실패하면 그 심볼은 하나도 안 들어갑니다.
-- 1분봉은 하루 심볼당 약 1,440행입니다. `/ohlc` 재집계 쿼리는 심볼 전체 행을 훑으므로 30~60일 정도를 권장합니다.
+## 문서
 
----
-
-## 📰 뉴스·감정 시그널 (선택 기능)
-
-코인 매체 RSS를 수집해 종목별 관련도·감정·이벤트 확률로 바꾸고(Laya), 이 값을 백테스트 전략 `news_sentiment` 의 입력으로 씁니다. 매매 판단은 Laya가 하지 않습니다. 설계·결정·실측은 [`docs/news-signal-design.md`](docs/news-signal-design.md).
-
-```bash
-# 1) 스키마 (init.sql 과 별개로 한 번 적용. VM: sudo -u postgres psql -d crypto -f db/news.sql)
-docker compose exec -T postgres psql -U crypto -d crypto < db/news.sql
-# 2) 수집 + 저장 (모델 없음). 외부 사이트를 폴링하므로 profile 로 분리했다
-docker compose --profile news up -d news-collector signal-worker
-# 3) Laya 분류까지 (PyTorch CPU 포함 이미지, 모델 가중치 ~808MB 는 hf-cache 볼륨에 저장)
-INSTALL_LAYA=1 LAYA_ENABLED=true docker compose --profile news up -d --build signal-worker
-#    저장 전용 때 쌓인 원문은 한 번 분류:  docker compose exec signal-worker python main.py --backfill
-```
-
-- API: `GET /news`, `/news/health`(수집 중단 감지), `/news/score`, `/features`(JSON/CSV), `GET /backtest?strategy=news_sentiment&compare=true`
-- 대시보드: 뉴스 점(●, 감정 색) · 점을 누르면 그 봉의 기사 · `news_score` 보조 선 · 복합 전략/단순 보유 기준선 비교
-- 로컬 사전 검증(M0): `cd signal-worker && python scripts/precheck_laya.py --n 20` (laya 설치 필요)
-- **정확도 검증(라벨링, M3 게이트) 전의 신호는 전략에 쓰지 마세요.** 거래가 30회 미만이면 결과는 우연일 수 있습니다. 투자 조언이 아닙니다.
-- 테스트: `news-collector`, `signal-worker`, `backend` 각각 `python -m unittest discover -s tests`. DB가 필요한 테스트는 `TEST_DATABASE_URL` 이 있을 때만 돕니다.
-
----
-
-## 🧠 핵심 스트리밍 개념 (이 프로젝트에서 배우는 것)
-
-- **Producer / Consumer**: Producer(파이썬)가 Kafka에 넣고, Spark가 꺼내 쓴다. 둘은 서로를 모르고 Kafka로만 연결된다(디커플링).
-- **파티션 키**: `key=symbol` 로 produce → 같은 심볼은 같은 파티션 → **순서 보장**.
-- **윈도우(Window)**: 1분 텀블링 윈도우로 OHLC 집계 (`spark/jobs/ohlc_stream.py`).
-- **워터마크(Watermark)**: 늦게 온 이벤트를 2분까지만 받아줌 → 무한정 상태 누적 방지.
-- **체크포인트(Checkpoint)**: 마지막 offset을 저장 → 재시작해도 이어서 처리(정확성).
-- **upsert**: 같은 (symbol, 분) 이 다시 계산되면 덮어쓴다 (`ON CONFLICT DO UPDATE`).
-
----
-
-## 📁 디렉터리 구조
-
-```
-kaspflow/
-├── docker-compose.yml       # 0️⃣ 전체 오케스트레이션 (여기부터 보기)
-├── .env.example             # 설정 값 예시 (.env로 복사)
-├── producer/                # 1️⃣ 거래소 WS → Kafka
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Dockerfile
-├── spark/                   # 2️⃣ Kafka → 집계 → Postgres
-│   ├── jobs/ohlc_stream.py
-│   └── Dockerfile
-├── db/
-│   └── init.sql             # 3️⃣ 테이블 스키마 (최초 기동 시 자동 실행)
-├── backend/                 # 4️⃣ Postgres → REST API
-│   ├── app.py
-│   ├── backtest.py          #   백테스트 엔진 (midas-touch 전략 이식, 순수 함수)
-│   ├── tests/               #   백테스트 유닛 테스트
-│   ├── requirements.txt
-│   └── Dockerfile
-├── news-collector/          # 뉴스: 코인 매체 RSS → Kafka(news-raw)  (docs/news-signal-design.md)
-├── signal-worker/           # 뉴스: news-raw → 종목 매칭 → (Laya 분류) → Postgres(news_raw, news_signal)
-├── dashboard/               # 5️⃣ API → 실시간 차트 (React + Vite + lightweight-charts)
-│   ├── src/
-│   │   ├── main.tsx         #   진입점 (여기부터 실행)
-│   │   ├── App.tsx          #   폴링 + 상태 + 레이아웃
-│   │   ├── api.ts           #   백엔드 호출 + 타입
-│   │   └── components/      #   CandleChart, SymbolSelector
-│   ├── nginx.conf           #   정적 서빙 + /api 프록시 (CORS 회피)
-│   ├── package.json
-│   └── Dockerfile           #   멀티스테이지: node 빌드 → nginx 서빙
-└── README.md
-```
-
----
-
-## 🛠️ 트러블슈팅
-
-- **Spark가 Kafka에 못 붙어요**: 컨테이너 내부에서는 `kafka:9092`(INTERNAL), 호스트에서는 `localhost:19092`(EXTERNAL)를 써야 합니다. 버전은 Spark 3.5 ↔ `spark-sql-kafka-0-10_2.12:3.5.1` 로 맞춰져 있습니다.
-- **대시보드에 "데이터 없음"**: Producer→Kafka→Spark→DB 까지 최소 1~2분 걸립니다. `docker compose logs -f spark` 로 upsert 로그를 먼저 확인하세요.
-- **스키마를 바꿨는데 반영이 안 돼요**: `init.sql` 은 DB **최초 생성 시 1회만** 실행됩니다. `docker compose down -v` 로 볼륨을 지운 뒤 다시 올리세요.
-- **거래소 연결 오류**: Binance 시장 데이터 스트림은 무료/무인증이지만 단일 연결이 24시간 후 끊깁니다. 연결이 끊겨도 Producer가 자동 재연결합니다. 일부 지역에서 `stream.binance.com` 접속이 막히면 `producer/main.py` 의 `BINANCE_WS_BASE` 를 `wss://data-stream.binance.vision/stream` (기본값) 그대로 두거나 대체 엔드포인트로 바꿔보세요.
-
----
-
-## 🤖 CI/CD (GitHub Actions)
-
-`.github/workflows/` 에 3개의 워크플로가 있습니다. 경로(paths) 필터로 **바뀐 부분만** 돌게 해서 낭비를 줄였습니다.
-
-| 워크플로 | 언제 | 무엇을 |
-| --- | --- | --- |
-| `ci-frontend.yml` | `dashboard/**` 변경 PR/push | `npm ci` → `npm run build` (타입체크 + 빌드) |
-| `ci-backend.yml` | `backend/` `producer/` `spark/` 변경 PR/push | 의존성 설치 + import/compile 스모크 |
-| `publish-images.yml` | `main` push (또는 수동 실행) | 4개 서비스 이미지 빌드 → **GHCR** push |
-
-### 이미지 위치 (GHCR)
-`main` 에 머지되면 아래 이미지가 자동으로 올라갑니다 (`<owner>/<repo>` 는 소문자):
-```
-ghcr.io/<owner>/<repo>-backend:latest
-ghcr.io/<owner>/<repo>-dashboard:latest
-ghcr.io/<owner>/<repo>-producer:latest
-ghcr.io/<owner>/<repo>-spark:latest
-```
-각 이미지에 `:latest` 와 `:sha-<커밋>` 태그가 붙습니다.
-
-> **최초 1회 설정**: 리포지토리 → Settings → Actions → General → "Workflow permissions" 에서
-> **Read and write permissions** 가 켜져 있어야 GHCR push가 됩니다.
-> push된 패키지는 기본 private이며, 리포지토리 → Packages 에서 확인/공개설정할 수 있습니다.
-
-### CD (Oracle VM 배포) — 집에서 이어붙이기
-### CD (Oracle VM 배포)
-배포용 파일이 준비되어 있습니다. **VM은 Docker + 네이티브 PostgreSQL 17**(컨테이너 아님) 조합입니다.
-
-- `docker-compose.prod.yml` — 이미지를 GHCR에서 pull, **postgres 컨테이너 없이 호스트 PG17 사용**(`host.docker.internal`), Spark 메모리 상한 포함
-- `.env.prod.example` — 프로덕션 `.env` 템플릿 (이미지 태그·DB 접속정보)
-- `infra/vm-setup.md` — **최초 1회 셋업 런북** (Docker 설치 → PG `crypto` DB → 방화벽 → 배포)
-- `infra/kaspflow-autodeploy.{sh,service,timer}` — main 폴링 자동배포 (2분 주기, CI 게이트 + 헬스체크 + 롤백)
-- `infra/Caddyfile` — 리버스 프록시 + 자동 HTTPS(Let's Encrypt). 한 도메인(`bit-kaspflow.duckdns.org`)에서 프론트(`/`)와 API(`/api`)를 함께 서빙 → 코드 수정·CORS 없이 HTTPS 접속
-
-배포 방식은 **VM이 main을 폴링**하는 pull 방식입니다 (SSH 키를 레포 시크릿에 두지 않아 안전 — midas 패턴 재사용).
-
-빠른 시작 (자세한 건 `infra/vm-setup.md`):
-```bash
-ssh oracle_vm
-curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER && newgrp docker
-# PG crypto DB 생성 + init.sql 적용 + pg_hba/listen 설정 (런북 §2~3)
-cd ~/kaspflow && cp .env.prod.example .env && nano .env
-docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
-```
-
----
-
-## 🧭 다음 단계 (후속 아이디어)
-
-- **CD 완성**: Oracle VM SSH 배포 잡 추가 (위 CI/CD 섹션 참고).
-- 거래량 급증 탐지 → `price_alert` 테이블 채우기 (스키마는 이미 준비됨).
-- 이동평균/볼린저 밴드 등 추가 지표 (차트 오버레이).
-- 백테스트: 파라미터 그리드 서치(midas `grid_search` 이식), 자본곡선 표시.
-- **뉴스·감정 시그널**: RSS 수집 → Kafka → Laya 분류 → 백테스트 피처. 설계는 `docs/news-signal-design.md`, 수집기는 `news-collector/`, 스키마는 `db/news.sql`.
-- 여러 거래소 동시 수집 → 거래소 간 가격차(김프) 모니터링.
-- Grafana로 대시보드 교체, Cassandra로 저장소 교체 실습.
+- [설계와 의사결정](docs/design.md)
+- [아키텍처](docs/architecture.md)
+- [VM 배포](infra/vm-setup.md)
