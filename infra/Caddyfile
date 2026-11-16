@@ -5,7 +5,7 @@
 # 코드 수정 없이 그대로 동작한다. (Vercel 처럼 출처가 갈리면 CORS/mixed-content 문제가 생김)
 #
 #   브라우저 ──HTTPS──> bit-kaspflow.duckdns.org (Caddy :443)
-#                         ├─ /api/*  ─> 127.0.0.1:8000  (backend, /api 접두사 제거)
+#                         ├─ /api/*  ─> 127.0.0.1:8010  (backend, /api 접두사 제거. VM 은 8000 을 midas-touch 가 써서 8010)
 #                         └─ /*      ─> 127.0.0.1:8501  (dashboard nginx = 정적 React)
 #
 # 설치 (VM):
@@ -26,10 +26,10 @@
 # import 로 병합한다. Caddy 는 한 프로세스가 여러 도메인을 동시에 서빙할 수 있다.
 
 bit-kaspflow.duckdns.org {
-	# /api/* 는 backend(FastAPI 8000)로. nginx.conf 와 동일하게 /api 접두사를 떼고 전달한다:
-	#   /api/ohlc -> http://127.0.0.1:8000/ohlc
+	# /api/* 는 backend 로. nginx.conf 와 동일하게 /api 접두사를 떼고 전달한다:
+	#   /api/analyze/NVDA -> http://127.0.0.1:8010/analyze/NVDA  (SSE 스트림은 Caddy 가 자동으로 바로바로 흘려보낸다)
 	handle_path /api/* {
-		reverse_proxy 127.0.0.1:8000
+		reverse_proxy 127.0.0.1:8010
 	}
 
 	# 그 외 전부는 대시보드(정적 React, nginx 컨테이너 8501)로.

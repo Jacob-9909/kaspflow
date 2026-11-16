@@ -1,74 +1,72 @@
-# kaspflow 아키텍처
+# kaspflow 아키텍처 (2세대: 주식 매매 검증기)
 
-> oracle_vm 실측 기준 · 스냅샷 2026-10-04, SSH 재확인 2026-10-05 (컨테이너 6개 정상 가동)
-> 서버: `ssh oracle_vm` (`ubuntu@161.33.134.252`, OCI 도쿄 A1.Flex ARM64)
+> 2026-11-16 재설계. 1세대(Binance → Kafka → Spark 1분봉 → 대시보드)는 git 기록에 남아 있다.
+> 서버: `ssh oracle_vm` (OCI 도쿄 A1.Flex ARM64 2 OCPU · 12GB). 방법론은 [methodology.md](methodology.md).
 
-## 시스템 구성도
-
-```mermaid
-flowchart TB
-    user([인터넷 사용자])
-
-    subgraph edge["엣지 (호스트, systemd)"]
-        caddy["Caddy TLS 프록시<br/>bit-kaspflow.duckdns.org:443"]
-    end
-
-    subgraph docker["Docker · kaspflow_default 네트워크 (compose 6개)"]
-        producer["producer<br/>Binance WS 수집<br/>main.py"]
-        kafka["kafka<br/>cp-kafka 7.7.0<br/>토픽 crypto-trades :9092"]
-        spark["spark<br/>Spark Structured Streaming<br/>1분봉 OHLC 집계"]
-        backend["backend<br/>FastAPI (uvicorn)<br/>:8000 → 호스트 8010"]
-        dashboard["dashboard<br/>React(Vite)+nginx<br/>lightweight-charts :80 → 호스트 8501"]
-        kafkaui["kafka-ui ⚠무인증<br/>:8080 → 호스트 8090"]
-    end
-
-    pg[("호스트 PostgreSQL 17<br/>crypto DB<br/>ohlc_1m ~3.7만행 · price_alert")]
-
-    user -->|HTTPS| caddy
-    caddy -->|/api/*| backend
-    caddy -->|그 외 /| dashboard
-    user -.->|평문 직접접속<br/>:8501| dashboard
-
-    producer --> kafka
-    kafka --> spark
-    spark -->|write| pg
-    backend -->|read| pg
-    kafka -.->|모니터링| kafkaui
-```
-
-## 데이터 플로우
+## 시스템 구성
 
 ```mermaid
 flowchart LR
-    A[Binance WebSocket] --> B[producer]
-    B --> C["Kafka<br/>crypto-trades"]
-    C --> D["Spark Streaming<br/>1분봉 OHLC"]
-    D --> E[("PostgreSQL<br/>crypto.ohlc_1m")]
-    E --> F["FastAPI<br/>backend"]
-    F --> G["React 대시보드"]
+    user([브라우저]) -->|HTTPS| caddy["Caddy :443<br/>bit-kaspflow.duckdns.org"]
+    caddy -->|/api/*| backend["backend (FastAPI, 1 워커)<br/>127.0.0.1:8010"]
+    caddy -->|/*| dashboard["dashboard (nginx + React)<br/>127.0.0.1:8501"]
+    backend -->|stock 스키마| pg[("PostgreSQL 17<br/>crypto DB")]
+    backend -->|시세·재무·애널리스트| yahoo[(Yahoo Finance)]
+    backend -->|기사| gnews[(Google News RSS)]
+    backend -->|뉴스 분류·투자 대가·해설| nim[(NVIDIA NIM)]
 ```
 
-## 컨테이너 목록 (6개)
+컨테이너는 backend, dashboard 2개다 (1세대는 6개). Kafka·Spark·Laya 모델을 내려 VM 메모리가 약 5GB 비었다.
 
-| 컨테이너 | 이미지 | 역할 | 포트 매핑 |
-|---|---|---|---|
-| `producer` | ghcr.io/jacob-9909/kaspflow-producer | Binance WebSocket → Kafka 적재 | 내부 전용 |
-| `kafka` | confluentinc/cp-kafka:7.7.0 | 메시지 브로커 (토픽 `crypto-trades`) | 9092 (외부 차단) |
-| `spark` | ghcr.io/jacob-9909/kaspflow-spark | Structured Streaming, 1분봉 OHLC 집계 | 내부 전용 |
-| `backend` | ghcr.io/jacob-9909/kaspflow-backend | FastAPI, `/api/*`·`/health` | 8010 → 8000 |
-| `dashboard` | ghcr.io/jacob-9909/kaspflow-dashboard | React(Vite) + nginx 차트 UI | 8501 → 80 |
-| `kafka-ui` | provectuslabs/kafka-ui | Kafka 모니터링 (무인증 ⚠) | 8090 → 8080 |
+## 한 번의 실행 (`GET /api/analyze/{symbol}`, SSE)
 
-## 핵심 포인트
+```mermaid
+sequenceDiagram
+    participant B as 브라우저
+    participant A as app.py
+    participant P as pipeline.py
+    participant N as NIM
+    B->>A: EventSource (쿠키 로그인 확인, same-origin 확인)
+    A->>P: 분석 작업 생성 (브라우저와 분리, 동시 2개)
+    P->>P: 1 데이터 수집 (캐시 우선, 병렬)
+    P-)N: 6 뉴스 분류 (2~5단계와 동시에)
+    P->>P: 2 기술적·국면·리스크 → 3 전략 30개 백테스트·검증 → 4 몬테카를로 → 5 재무·밸류에이션
+    P->>N: 7 투자 대가 6인 (병렬)
+    P->>P: 8 기간별 판단 (계량)
+    P->>N: 위원장 해설 (판단은 못 바꿈)
+    P-->>A: 단계 이벤트 + 결과
+    A->>A: stock.analysis_run 저장
+    A-->>B: data: {type: done, run_id, data}
+```
 
-- **실행 방식**: Docker Compose `docker-compose.prod.yml`, 이미지는 GHCR에서 pull.
-- **외부 노출**: Caddy가 `bit-kaspflow.duckdns.org`에서 TLS 종단 → `/api/*`는 8010(backend), 나머지는 8501(dashboard)로 분기.
-- **DB**: 컨테이너가 아닌 **호스트의 PostgreSQL 17** `crypto` DB 사용 (`ohlc_1m`, `price_alert`).
-- **배포**: 자동 CD — `kaspflow-autodeploy.timer`가 ~2분마다 GitHub `main` 폴링 → `git pull` → `compose pull/up -d` → `/health` 실패 시 롤백.
-- **레포**: https://github.com/Jacob-9909/kaspflow (서버 HEAD `24f63bd`, `main`)
+브라우저를 닫아도 작업은 끝까지 돌고 기록에 저장된다. LLM 단계는 시간 제한(뉴스 100초, 투자 대가 110초, 해설 80초)을
+넘기거나 실패하면 규칙 점수·기본 문장으로 대신한다.
 
-## 주의할 점
+## 백엔드 모듈 (`backend/`)
 
-- ⚠️ `8501` 대시보드가 평문(HTTP)으로도 외부 직접 노출됨.
-- ⚠️ `kafka-ui`(8090)는 외부 차단이지만 무인증.
-- 🚨 `crypto` DB 포함 PostgreSQL **백업 없음** (oracle_vm 할 일 1순위).
+| 파일 | 역할 |
+|---|---|
+| `app.py` | FastAPI 라우트, 비밀번호 로그인(HMAC 쿠키), SSE, 기록·적중률 |
+| `pipeline.py` | 8단계 오케스트레이션, 결과 조립 |
+| `market.py` | yfinance·구글 뉴스 수집, 캐시, 검색 |
+| `indicators.py` / `strategies.py` | 지표(Wilder RSI, ATR, ADX 등), 전략 11개 |
+| `backtest.py` / `validation.py` | 다음 날 시가 체결 벡터 엔진, 워크포워드·순열 검정·DSR·재표본 |
+| `simulation.py` | 몬테카를로, 매매 계획, 유사 국면, 리스크 |
+| `fundamentals.py` | 품질(피오트로스키, 알트만), DCF·역DCF·PEG·그레이엄·EPV, 컨센서스 |
+| `news.py` / `personas.py` | NIM 뉴스 분류·집계, 투자 대가 체크리스트 + 의견 |
+| `verdict.py` | 기술적·국면 점수, 기간별 가중 합산, 보유자 조언, 위원장 해설 |
+| `llm.py` | NIM 클라이언트 (키 교대, 분당 제한, 재시도, 대체 모델, 캐시) |
+| `db.py` / `schema.sql` | psycopg 풀, `stock.cache`, `stock.analysis_run` |
+
+## 데이터베이스 (`crypto` DB, `stock` 스키마)
+
+- `stock.cache(key, payload jsonb, fetched_at)`: 외부 데이터와 LLM 응답 캐시. 30일 지난 행은 기동 시 삭제.
+- `stock.analysis_run(id uuid, symbol, horizon, verdict, score, confidence, price, result jsonb, ...)`: 실행 기록.
+  `result` 에 화면을 다시 그릴 수 있는 전체 결과(약 300KB)가 있다. 공유 주소 `/?run=<id>` 가 이걸 읽는다.
+
+## 배포
+
+- CI: `ci-backend.yml` (유닛 + postgres:17 통합 테스트 + 이미지 import 검사), `ci-frontend.yml` (타입 검사 + 빌드).
+- CD: `publish-images.yml` (테스트 → amd64/arm64 이미지 → GHCR) + VM 의 `kaspflow-autodeploy.timer` (2분 폴링,
+  CI 게이트, 커밋별 이미지 태그, `/health` 실패 시 롤백). 자세한 절차는 [../infra/vm-setup.md](../infra/vm-setup.md).
+- 비밀값은 VM 의 `~/kaspflow/.env` 에만 있다: `POSTGRES_PASSWORD`, `NVIDIA_API_KEY(_2)`, `APP_PASSWORD`.
