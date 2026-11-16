@@ -81,7 +81,8 @@ class TestAPI(unittest.TestCase):
         appmod.S.login_fail.clear()
         self.login()
         self.assertTrue(self.c.get("/auth/me").json()["authenticated"])
-        self.assertFalse(appmod.token_ok(appmod.make_token()[:-1] + "0"))
+        tok = appmod.make_token()   # 서명 끝 글자 변조 (원래 "0" 이면 바꿔도 같아서 1/16 확률로 통과하던 검사)
+        self.assertFalse(appmod.token_ok(tok[:-1] + ("1" if tok[-1] == "0" else "0")))
         self.assertFalse(appmod.token_ok(appmod.make_token(now=0)))   # 만료
         # 비밀번호를 알아도 서버 비밀값 없이는 쿠키를 만들 수 없다 (예전 방식: 비밀번호만으로 만든 키)
         key, exp = hashlib.sha256(b"kaspflow-session:test-pass").digest(), str(int(time.time()) + 3600)
