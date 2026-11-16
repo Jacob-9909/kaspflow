@@ -146,7 +146,7 @@ export function PlanCard({ r, horizon }: { r: Result; horizon: Horizon }) {
         </dl>
         <div>
           <FanChart fan={s.fan} days={s[horizon].days} price={p.entry} stop={p.stop} target={p.target} />
-          <p className="hint">손절·목표 = <Term k="ATR" />({num(p.atr, 2)}) x {p.atr_mult[0]} / {p.atr_mult[1]}. 비중은 1회 손실을 계좌의 1%로 묶는 기준(최대 25%).
+          <p className="hint">손절과 목표 = <Term k="ATR" />({num(p.atr, 2)}) × {p.atr_mult[0]} / {p.atr_mult[1]}. 비중은 1회 손실을 계좌의 1%로 묶는 기준(최대 25%).
             경로 {r.simulation.paths.toLocaleString()}개, 최근 3년 수익률 블록 부트스트랩. 기대수익은 CAPM {pct(r.simulation.drift)} 로 맞춤(과거 추세를 미래로 늘리지 않음).</p>
         </div>
       </div>

@@ -6,15 +6,15 @@ import Search from "./Search";
 
 const POPULAR = ["NVDA", "AAPL", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "AMD", "PLTR", "SPY", "QQQ", "BTC-USD"];
 const MODULE_INFO: [string, string][] = [
-  ["기술적 지표", "추세(SMA50/200·ADX)·모멘텀·상대강도·RSI·MACD"],
-  ["검증된 전략 신호", "11개 전략 30개 변형을 워크포워드·순열검정·DSR 로 검증하고 통과한 것만 투표"],
-  ["과거 유사 국면", "지금과 같은 추세·모멘텀·RSI 구간이었던 날들의 이후 수익률"],
-  ["몬테카를로", "2,000개 가격 경로로 범위·손절/목표 도달 확률·비중"],
-  ["밸류에이션", "DCF·역DCF·PEG·그레이엄·EPV, WACC 민감도"],
-  ["재무 품질", "수익성·성장성·건전성, 피오트로스키 F, 알트만 Z"],
-  ["애널리스트", "투자의견·목표가 괴리·EPS 추정치 상향/하향"],
+  ["기술적 지표", "추세(SMA50/200, ADX), 모멘텀, 상대강도, RSI, MACD"],
+  ["검증된 전략 신호", "11개 전략 30개 변형을 워크포워드, 순열 검정, DSR 로 검증하고 통과한 것만 투표"],
+  ["과거 유사 국면", "지금과 같은 추세, 모멘텀, RSI 구간이었던 날들의 이후 수익률"],
+  ["몬테카를로", "2,000개 가격 경로로 범위, 손절과 목표 도달 확률, 비중"],
+  ["밸류에이션", "DCF, 역DCF, PEG, 그레이엄, EPV, WACC 민감도"],
+  ["재무 품질", "수익성, 성장성, 건전성, 피오트로스키 F, 알트만 Z"],
+  ["애널리스트", "투자의견, 목표가 괴리, EPS 추정치 상향과 하향"],
   ["뉴스 감성", "최근 3주 기사를 NIM 으로 분류해 시간 가중"],
-  ["투자 대가 6인", "버핏·그레이엄·린치·멍거·캐시 우드·드러켄밀러 관점"],
+  ["투자 대가 6인", "버핏, 그레이엄, 린치, 멍거, 캐시 우드, 드러켄밀러 관점"],
 ];
 
 export function RunsTable({ data, onOpen, compact = false }: { data: RunsResponse; onOpen: (id: string) => void; compact?: boolean }) {
@@ -71,7 +71,8 @@ export function Home({ onPick, onOpen }: { onPick: (s: string) => void; onOpen: 
         <Search onPick={onPick} big autoFocus />
         <div className="chips">{POPULAR.map((s) => <button key={s} className="chip" onClick={() => onPick(s)}>{s}</button>)}</div>
       </section>
-      <section className="modules-info" aria-label="검증 항목">
+      <section className="modules-info" aria-labelledby="modules-title">
+        <h2 id="modules-title" className="sr-only">검증 항목</h2>
         {MODULE_INFO.map(([t, d]) => <div key={t} className="card mini"><h3>{t}</h3><p>{d}</p></div>)}
       </section>
       <section className="card">

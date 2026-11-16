@@ -308,7 +308,7 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
                   <section className="card chart-card" aria-label="가격 차트">{priceChart(320)}</section>
                   <section className="card empty">
                     <h2>아직 판단이 없습니다</h2>
-                    <p>오른쪽(모바일은 아래) 실행 패널에서 기간을 고르고 실행하면 약 30~60초 뒤 매수·관망·매도 판단과 근거가 여기에 나옵니다.</p>
+                    <p>오른쪽(모바일은 아래) 실행 패널에서 기간을 고르고 실행하면 약 30~60초 뒤 매수, 관망, 매도 중 하나의 판단과 근거가 여기에 나옵니다.</p>
                     {past && past.runs.length > 0 && <p className="hint">이 종목의 이전 판단이 {past.runs.length}건 있습니다. '판단 기록' 탭에서 볼 수 있습니다.</p>}
                   </section>
                 </div>
@@ -330,7 +330,7 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
                   )}
                 </div>
                 {priceChart(480)}
-                {result?.quote.partial_bar && <p className="hint">장중 데이터: 마지막 봉은 아직 진행 중이라 검증·백테스트에서 뺐습니다.</p>}
+                {result?.quote.partial_bar && <p className="hint">장중 데이터: 마지막 봉은 아직 진행 중이라 검증과 백테스트에서 뺐습니다.</p>}
               </section>
               {result && <TrendCard r={result} />}
             </div>

@@ -69,12 +69,12 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
             <div><dt>지금 쓰는 파라미터</dt><dd>{Object.entries(sel.current.params).map(([k, x]) => `${k}=${x}`).join(", ")}</dd></div>
             {Object.entries(sel.current.levels).map(([k, x]) => <div key={k}><dt>{k}</dt><dd className="num">{x === null ? "-" : Math.abs(x) < 5 && !k.includes("SMA") ? num(x, 3) : num(x, 2)}</dd></div>)}
             <div><dt>워크포워드 효율 (OOS/IS 샤프)</dt><dd className="num">{num(sel.wf?.efficiency, 2)}</dd></div>
-            <div><dt>전 구간 최고 변형 (과최적화 주의)</dt><dd className="num">샤프 {num(sel.best_full.metrics.sharpe, 2)} · {Object.entries(sel.best_full.params).map(([k, x]) => `${k}=${x}`).join(", ")}</dd></div>
-            {sel.mc && <div><dt>거래 재표본 1,000회</dt><dd className="num">수익 5%/50%/95% {pct(sel.mc.ret_p5, 0)} / {pct(sel.mc.ret_p50, 0)} / {pct(sel.mc.ret_p95, 0)} · 낙폭 5% {pct(sel.mc.mdd_p5, 0)}</dd></div>}
+            <div><dt>전 구간 최고 변형 (과최적화 주의)</dt><dd className="num">샤프 {num(sel.best_full.metrics.sharpe, 2)}, {Object.entries(sel.best_full.params).map(([k, x]) => `${k}=${x}`).join(", ")}</dd></div>
+            {sel.mc && <div><dt>거래 재표본 1,000회</dt><dd className="num">수익 5%/50%/95% {pct(sel.mc.ret_p5, 0)} / {pct(sel.mc.ret_p50, 0)} / {pct(sel.mc.ret_p95, 0)}, 낙폭 5% {pct(sel.mc.mdd_p5, 0)}</dd></div>}
           </dl>
         </div>
       )}
-      <p className="hint">등급: A(p≤0.05·샤프≥0.5·거래≥15·DSR≥0.8) B(p≤0.10·샤프≥0.3·거래≥8·DSR≥0.5) C(p≤0.25·샤프&gt;0·거래≥5) F(판단에 안 씀). 가격 차트의 화살표는 선택한 전략의 최근 2년 매매입니다.</p>
+      <p className="hint">등급: A(p≤0.05, 샤프≥0.5, 거래≥15, DSR≥0.8), B(p≤0.10, 샤프≥0.3, 거래≥8, DSR≥0.5), C(p≤0.25, 샤프&gt;0, 거래≥5), F(판단에 안 씀). 가격 차트의 화살표는 선택한 전략의 최근 2년 매매입니다.</p>
     </section>
   );
 }
@@ -98,7 +98,7 @@ export function Valuation({ r }: { r: Result }) {
             <h3>DCF (FCFF, 2단계 + 영구성장)</h3>
             <dl className="kv">
               <div><dt>주당 내재가치</dt><dd className={`num ${d.per_share >= r.quote.price ? "up" : "down"}`}>{usd(d.per_share)}</dd></div>
-              <div><dt><Term k="WACC" /></dt><dd className="num">{pct(d.wacc, 1, false)} <small>자기자본비용 {pct(d.cost_of_equity, 1, false)} · 조정 베타 {num(d.beta, 2)}</small></dd></div>
+              <div><dt><Term k="WACC" /></dt><dd className="num">{pct(d.wacc, 1, false)} <small>자기자본비용 {pct(d.cost_of_equity, 1, false)}, 조정 베타 {num(d.beta, 2)}</small></dd></div>
               <div><dt>1~5년 성장률</dt><dd className="num">{pct(d.growth)} <small>6~10년 영구성장률 {pct(d.terminal_growth, 1, false)} 로 수렴</small></dd></div>
               <div><dt>현재가가 가정하는 성장률 (<Term k="역DCF" />)</dt><dd className={`num ${d.implied_growth > d.growth ? "down" : "up"}`}>{pct(d.implied_growth)}</dd></div>
               <div><dt>터미널 가치 비중</dt><dd className="num">{pct(d.tv_share, 0, false)}</dd></div>
@@ -122,7 +122,7 @@ export function Valuation({ r }: { r: Result }) {
             {MULT.filter(([k]) => typeof mult[k] === "number").map(([k, label, f]) => <div key={k}><dt>{label}</dt><dd className="num">{f(mult[k] as number)}</dd></div>)}
           </dl>
           {v.notes?.map((n) => <p key={n} className="hint warn">{n}</p>)}
-          <p className="hint">적정가 = DCF 50% · PEG 30% · 그레이엄 공식 20% 가중. EPV(무성장)와 그레이엄 넘버는 보수적 하한으로만 표시합니다.</p>
+          <p className="hint">적정가 = DCF 50%, PEG 30%, 그레이엄 공식 20% 가중. EPV(무성장)와 그레이엄 넘버는 보수적 하한으로만 표시합니다.</p>
         </div>
       </div>
     </section>
@@ -162,12 +162,12 @@ export function Fundamentals({ r }: { r: Result }) {
           <h3>애널리스트 컨센서스</h3>
           <p>{c.summary}</p>
           {"rating_changes_90d" in detail && (
-            <p className="hint">최근 90일 등급 상향 {(detail.rating_changes_90d as { up: number }).up}건 · 하향 {(detail.rating_changes_90d as { down: number }).down}건</p>
+            <p className="hint">최근 90일 등급 상향 {(detail.rating_changes_90d as { up: number }).up}건, 하향 {(detail.rating_changes_90d as { down: number }).down}건</p>
           )}
           {c.recent && c.recent.length > 0 && (
             <ul className="actions">
               {c.recent.slice(0, 6).map((a, i) => (
-                <li key={i}><span className="date">{a.date}</span> {a.firm} <span className={a.action === "up" ? "up" : a.action === "down" ? "down" : ""}>{a.from && a.from !== a.to ? `${a.from} → ` : ""}{a.to}</span>{a.target ? ` · 목표 ${usd(a.target)}` : ""}</li>
+                <li key={i}><span className="date">{a.date}</span> {a.firm} <span className={a.action === "up" ? "up" : a.action === "down" ? "down" : ""}>{a.from && a.from !== a.to ? `${a.from} → ` : ""}{a.to}</span>{a.target ? `, 목표 ${usd(a.target)}` : ""}</li>
               ))}
             </ul>
           )}
@@ -231,7 +231,7 @@ export function News({ r }: { r: Result }) {
       <h2 id="news-title">뉴스 감성 <span className="sub">{a.summary}</span></h2>
       {error && <p className="hint warn">{error}</p>}
       {a.available && (
-        <p className="hint">최근 7일 {signed(a.recent_7d ?? null)} · 그 이전 {signed(a.older ?? null)} · 사건: {Object.entries(a.events ?? {}).map(([k, x]) => `${k} ${x}`).join(", ") || "-"}</p>
+        <p className="hint">최근 7일 {signed(a.recent_7d ?? null)}, 그 이전 {signed(a.older ?? null)}. 사건: {Object.entries(a.events ?? {}).map(([k, x]) => `${k} ${x}`).join(", ") || "-"}</p>
       )}
       <ul className="news">
         {shown.map((x) => (
@@ -258,7 +258,7 @@ export function Analogs({ r, horizon }: { r: Result; horizon: Horizon }) {
       {a.available && a.hist && (
         <>
           <Histogram counts={a.hist.counts} edges={a.hist.edges} />
-          <p className="hint">표본 {a.n}일 (겹침을 감안한 유효 표본 {a.n_eff}) · 평균 {pct(a.mean)} vs 전체 {pct(a.base_mean)} · t = {num(a.t_stat, 2)}. |t| 가 2 미만이면 우연과 구별하기 어렵습니다.</p>
+          <p className="hint">표본 {a.n}일 (겹침을 감안한 유효 표본 {a.n_eff}), 평균 {pct(a.mean)} vs 전체 {pct(a.base_mean)}, t = {num(a.t_stat, 2)}. |t| 가 2 미만이면 우연과 구별하기 어렵습니다.</p>
         </>
       )}
     </section>

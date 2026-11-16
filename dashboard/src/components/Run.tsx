@@ -32,7 +32,7 @@ export function LoginForm({ onDone }: { onDone: () => void }) {
         <button className="btn" disabled={busy || !pw}>{busy ? "확인 중…" : "로그인"}</button>
       </div>
       {err && <p className="field-error" id="pw-err" role="alert">{err}</p>}
-      <p className="hint">결과·기록 보기는 누구나 됩니다. 실행은 NIM 호출량 보호를 위해 비밀번호가 필요합니다.</p>
+      <p className="hint">결과와 기록 보기는 누구나 됩니다. 실행은 NIM 호출량 보호를 위해 비밀번호가 필요합니다.</p>
     </form>
   );
 }
@@ -73,20 +73,25 @@ export function RunPanel({ symbol, authed, loginEnabled, running, onRun, onLogin
   return (
     <section className="card run-panel" id="run-panel" aria-labelledby="run-title">
       <h2 id="run-title">검증·시뮬레이션</h2>
-      <fieldset className="segmented">
+      {/* 배경을 fieldset 에 주면 legend 가 fieldset 위쪽 테두리에 걸쳐 그려져 상자와 겹친다. 배경은 안쪽 div 에 준다 */}
+      <fieldset>
         <legend>판단 기간</legend>
-        {HORIZONS.map((h) => (
-          <label key={h} className={horizon === h ? "on" : ""}>
-            <input type="radio" name="horizon" value={h} checked={horizon === h} onChange={() => setHorizon(h)} />
-            {HORIZON_LABEL[h]}
-          </label>
-        ))}
+        <div className="segmented">
+          {HORIZONS.map((h) => (
+            <label key={h} className={horizon === h ? "on" : ""}>
+              <input type="radio" name="horizon" value={h} checked={horizon === h} onChange={() => setHorizon(h)} />
+              {HORIZON_LABEL[h]}
+            </label>
+          ))}
+        </div>
       </fieldset>
-      <fieldset className="position">
+      <fieldset>
         <legend>보유 중이면 입력 (선택)</legend>
-        <label>수량<input inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" /></label>
-        <label>평균 단가($)<input inputMode="decimal" value={avg} onChange={(e) => setAvg(e.target.value)} placeholder="0.00" /></label>
-        {(qty || avg) && <button type="button" className="link" onClick={() => { setQty(""); setAvg(""); }}>지우기</button>}
+        <div className="position">
+          <label>수량<input inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" /></label>
+          <label>평균 단가($)<input inputMode="decimal" value={avg} onChange={(e) => setAvg(e.target.value)} placeholder="0.00" /></label>
+          {(qty || avg) && <button type="button" className="link" onClick={() => { setQty(""); setAvg(""); }}>지우기</button>}
+        </div>
       </fieldset>
       {posInvalid && <p className="field-error" role="alert">수량과 평균 단가를 둘 다 0보다 크게 입력하세요.</p>}
       {authed ? (
@@ -95,7 +100,7 @@ export function RunPanel({ symbol, authed, loginEnabled, running, onRun, onLogin
           {running ? <><span className="spinner" aria-hidden="true" /> 실행 중…</> : "검증·시뮬레이션 실행"}
         </button>
       ) : loginEnabled ? <LoginForm onDone={onLogin} /> : <p className="hint">서버에 APP_PASSWORD 가 설정되지 않아 실행할 수 없습니다.</p>}
-      <p className="hint">전략 11종 × 변형 30개 백테스트, 워크포워드·순열 검정·DSR, 몬테카를로 2,000경로, 재무·밸류에이션, 뉴스 감성, 투자 대가 6인을 차례로 돌려 종합 판단을 냅니다. 약 30~90초.</p>
+      <p className="hint">전략 11종 × 변형 30개 백테스트, 워크포워드 검증, 순열 검정, DSR, 몬테카를로 2,000경로, 재무와 밸류에이션, 뉴스 감성, 투자 대가 6인을 차례로 돌려 종합 판단을 냅니다. 약 30~90초.</p>
     </section>
   );
 }
