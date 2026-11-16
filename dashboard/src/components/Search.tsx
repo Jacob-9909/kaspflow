@@ -3,6 +3,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import { api, type SearchHit } from "../api";
 
 const RECENT_KEY = "kf-recent";
+/* 자동 포커스는 마우스·트랙패드 화면에서만 (모바일은 키보드가 바로 올라와 화면을 가린다) */
+const finePointer = () => typeof matchMedia === "function" && matchMedia("(pointer: fine)").matches;
 
 export function recentSymbols(): SearchHit[] {
   try {
@@ -27,6 +29,9 @@ export default function Search({ onPick, big = false, autoFocus = false }: { onP
   const [busy, setBusy] = useState(false);
   const listId = useId();
   const box = useRef<HTMLDivElement>(null);
+  const [auto] = useState(() => autoFocus && finePointer());
+  // 페이지를 열자마자 자동 포커스로 최근 목록이 펼쳐져 아래 내용을 가리지 않게, 첫 포커스는 목록을 열지 않는다
+  const skipFocusOpen = useRef(auto);
   const showingRecent = !q.trim();
   const items = showingRecent ? recentSymbols() : hits;
 
@@ -77,8 +82,9 @@ export default function Search({ onPick, big = false, autoFocus = false }: { onP
       <svg className="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
       <input
         value={q} onChange={(e) => { setQ(e.target.value); setActive(0); }} onKeyDown={onKey}
-        onFocus={() => { setActive(0); setOpen(true); }}
-        placeholder="종목명 또는 티커 (예: NVDA, Apple, SPY)" aria-label="종목 검색" autoFocus={autoFocus}
+        onFocus={() => { if (skipFocusOpen.current) { skipFocusOpen.current = false; return; } setActive(0); setOpen(true); }}
+        onClick={() => setOpen(true)}
+        placeholder="종목명 또는 티커 (예: NVDA, Apple, SPY)" aria-label="종목 검색" autoFocus={auto}
         role="combobox" aria-expanded={open && items.length > 0} aria-controls={listId} aria-autocomplete="list"
         aria-activedescendant={open && items[active] ? `${listId}-${active}` : undefined} autoComplete="off" spellCheck={false}
       />
