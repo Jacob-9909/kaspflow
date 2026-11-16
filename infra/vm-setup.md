@@ -16,6 +16,7 @@
    cd ~/kaspflow
    grep -E '^NVIDIA_API_KEY(_2)?=' ~/midas-touch/.env >> .env     # NIM 키 복사
    nano .env                                                       # APP_PASSWORD=<실행 비밀번호> 추가
+   echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env          # 로그인 쿠키 서명 키
    chmod 600 .env
    ```
    1세대 전용 값(KAFKA_TOPIC, SYMBOLS, LAYA_ENABLED, SIGNAL_WORKER_MEM_LIMIT)은 남아 있어도 무시된다.
