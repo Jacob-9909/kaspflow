@@ -4,6 +4,7 @@ import type { Horizon, Result, StrategyResult } from "../api";
 import { HORIZON_LABEL, date, dirClass, num, pct, signed, usd } from "../format";
 import { EquityChart, FootballField, Histogram } from "./Charts";
 import { Term } from "./Glossary";
+import { MetaList } from "./ui";
 
 const FAMILY: Record<string, string> = { trend: "추세", reversion: "역추세", day: "단타" };
 
@@ -21,7 +22,7 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
   const bh = v.buy_hold.oos;
   return (
     <section className="card" id="sec-strategies" aria-labelledby="strat-title">
-      <h2 id="strat-title">전략 검증 <span className="sub">{v.start} ~ {v.end} · {v.bars.toLocaleString()}봉 · 변형 {v.n_trials}개 · 워크포워드 {v.folds}구간</span></h2>
+      <h2 id="strat-title">전략 검증 <span className="sub"><MetaList items={[`${v.start} ~ ${v.end}`, `${v.bars.toLocaleString()}봉`, `변형 ${v.n_trials}개`, `워크포워드 ${v.folds}구간`]} /></span></h2>
       <p className="hint">숫자는 모두 표본 밖(OOS) 성과입니다. 직전 3년에서 고른 파라미터를 다음 1년에 그대로 써서 이어 붙였습니다. 체결은 다음 날 시가, 편도 비용 0.05%, 현금은 단기 국채 금리.
         순열 p값 = 같은 보유 패턴을 무작위 시점에 둘 때 이만큼 나올 확률. DSR = 변형 {v.n_trials}개를 시험한 것을 감안한 샤프 신뢰도(기준 샤프 {num(v.sr0_annual, 2)}).</p>
       <div className="table-wrap">
@@ -104,7 +105,7 @@ export function Valuation({ r }: { r: Result }) {
             </dl>
             <p className="hint">성장률 근거: {d.growth_sources.join(", ") || "-"} (중앙값, -5%~30% 제한). 주식보상(SBC)은 비용으로 뺐습니다.</p>
             <table className="table compact sens">
-              <caption>민감도: WACC x 영구성장률 (주당 가치)</caption>
+              <caption>민감도: WACC × 영구성장률 (주당 가치)</caption>
               <thead><tr><th>WACC \ g</th>{d.sensitivity.g_term.map((g) => <th key={g}>{pct(g, 1, false)}</th>)}</tr></thead>
               <tbody>
                 {d.sensitivity.values.map((row, i) => (
@@ -134,7 +135,7 @@ export function Fundamentals({ r }: { r: Result }) {
   const detail = (c.detail ?? {}) as Record<string, unknown>;
   return (
     <section className="card" id="sec-fundamentals" aria-labelledby="fund-title">
-      <h2 id="fund-title">재무 품질 · 애널리스트</h2>
+      <h2 id="fund-title">재무 품질과 애널리스트</h2>
       <div className="three-col">
         <div>
           <h3>품질 점수</h3>
@@ -238,12 +239,12 @@ export function News({ r }: { r: Result }) {
             {x.sentiment !== undefined && <span className={`senti ${dirClass(x.sentiment, 0.15)}`} aria-label={`감성 ${signed(x.sentiment, 1)}`}>{signed(x.sentiment, 1)}</span>}
             <div>
               <a href={x.url} target="_blank" rel="noreferrer noopener">{x.title_ko || x.title}</a>
-              <div className="meta">{x.source} · {date(x.published)}{x.event ? ` · ${EVENT_KO[x.event] ?? x.event}` : ""}{x.title_ko ? ` · ${x.title}` : ""}</div>
+              <div className="meta"><MetaList items={[x.source, date(x.published), x.event ? (EVENT_KO[x.event] ?? x.event) : null]} />{x.title_ko && <div>{x.title}</div>}</div>
             </div>
           </li>
         ))}
       </ul>
-      {items.length > 15 && <button className="btn ghost" onClick={() => setAll(!all)}>{all ? "관련 기사만" : `전체 ${items.length}건 보기`}</button>}
+      {items.length > 15 && <button className="btn outline" onClick={() => setAll(!all)}>{all ? "관련 기사만" : `전체 ${items.length}건 보기`}</button>}
     </section>
   );
 }

@@ -1,41 +1,45 @@
 /** 결과 요약부: 판단 히어로, 모듈 등급 카드(누르면 해당 탭), 근거, 매매 계획 요약, 몬테카를로, 리스크·추세. */
 import type { Horizon, Result } from "../api";
-import { HORIZON_LABEL, HORIZONS, dirClass, num, pct, signed, usd } from "../format";
+import { HORIZON_LABEL, HORIZON_SHORT, HORIZONS, dirClass, num, pct, signed, usd } from "../format";
 import { FanChart, Gauge, ScoreBar } from "./Charts";
 import { Term } from "./Glossary";
+import { Chevron } from "./ui";
 
 export function VerdictHero({ r, horizon, onHorizon }: { r: Result; horizon: Horizon; onHorizon: (h: Horizon) => void }) {
   const v = r.verdicts[horizon];
   const tone = v.verdict === "buy" ? "up" : v.verdict === "sell" ? "down" : "hold";
   return (
     <section className={`card verdict tone-${tone}`} aria-labelledby="verdict-title">
-      <div className="verdict-main">
-        <div>
-          <p className="eyebrow">{HORIZON_LABEL[horizon]} 판단</p>
-          <h2 id="verdict-title" className="verdict-label" tabIndex={-1}>{v.strong ? "강한 " : ""}{v.label}</h2>
-          <p className="verdict-meta">
-            종합 점수 <b className="num">{signed(v.score * 100, 0)}</b> · <Term k="신뢰도" /> <b className="num">{pct(v.confidence, 0, false)}</b>{" "}
-            · 근거 <Term k="일치도" /> <b className="num">{pct(v.agreement, 0, false)}</b>
-          </p>
-        </div>
-        <Gauge score={v.score} label={v.label} />
-      </div>
-      <div className="horizon-chips" role="group" aria-label="판단 기간 바꾸기">
+      <div className="horizon-seg" role="group" aria-label="판단 기간 바꾸기">
         {HORIZONS.map((h) => {
           const x = r.verdicts[h];
           return (
-            <button key={h} aria-pressed={h === horizon} className={`chip v-${x.verdict}${h === horizon ? " on" : ""}`} onClick={() => onHorizon(h)}>
-              <span>{HORIZON_LABEL[h]}</span><b>{x.label}</b><span className="num">{signed(x.score * 100, 0)}</span>
+            <button key={h} type="button" aria-pressed={h === horizon} className={`v-${x.verdict}`} onClick={() => onHorizon(h)}
+                    aria-label={`${HORIZON_LABEL[h]} ${x.label} ${signed(x.score * 100, 0)}`}>
+              <span>{HORIZON_SHORT[h]}</span><b>{x.label}</b><span className="num">{signed(x.score * 100, 0)}</span>
             </button>
           );
         })}
       </div>
-      <div className="narrative-head">
+      <div className="verdict-main">
+        <div>
+          <h2 id="verdict-title" className="verdict-label" tabIndex={-1}>
+            <span className="sr-only">{HORIZON_LABEL[horizon]} 판단 </span>{v.strong ? "강한 " : ""}{v.label}
+          </h2>
+          <dl className="verdict-stats">
+            <div><dt>종합 점수</dt><dd className="num">{signed(v.score * 100, 0)}</dd></div>
+            <div><dt><Term k="신뢰도" /></dt><dd className="num">{pct(v.confidence, 0, false)}</dd></div>
+            <div><dt>근거 <Term k="일치도" /></dt><dd className="num">{pct(v.agreement, 0, false)}</dd></div>
+          </dl>
+        </div>
+        <Gauge score={v.score} label={v.label} />
+      </div>
+      <div className="narrative">
         <h3>{r.narrative.headline}</h3>
         <p>{r.narrative.summary}</p>
       </div>
       <div className={`advice${r.advice.holding ? " holding" : ""}`}>
-        <span className="advice-tag">{r.advice.holding ? `보유 중 · 평가손익 ${pct(r.advice.pnl)}` : "미보유 기준"}</span>
+        <span className="advice-tag">{r.advice.holding ? `보유 중, 평가손익 ${pct(r.advice.pnl)}` : "미보유 기준"}</span>
         <p>{r.advice.text}</p>
       </div>
       {v.notes.length > 0 && <ul className="notes">{v.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
@@ -52,31 +56,32 @@ export const MODULE_TAB: Record<string, string> = {
 export function FactorGrid({ r, horizon, onOpen }: { r: Result; horizon: Horizon; onOpen: (tab: string) => void }) {
   const v = r.verdicts[horizon];
   return (
-    <section aria-labelledby="factor-title">
-      <h2 id="factor-title" className="section-title">모듈별 등급 <span className="sub">점수 -100(매도) ~ +100(매수) · 가중치는 {HORIZON_LABEL[horizon]} 기준 · 카드를 누르면 자세히</span></h2>
-      <div className="factor-grid">
+    <section className="card" aria-labelledby="factor-title">
+      <div className="panel-head">
+        <h2 id="factor-title">모듈별 점수</h2>
+        <p className="hint">-100 매도부터 +100 매수까지. 가중치는 {HORIZON_LABEL[horizon]} 기준</p>
+      </div>
+      <ul className="factor-list">
         {r.modules.map((m) => {
           const contrib = v.contributions[m.key];
           return (
-            <button key={m.key} type="button" className={`card factor${m.available ? "" : " off"}`} onClick={() => onOpen(MODULE_TAB[m.key] ?? "summary")}
-                    aria-label={`${m.label} 등급 ${m.grade}, 점수 ${m.available ? signed(m.score * 100, 0) : "없음"}. 자세히 보기`}>
-              <span className="factor-head">
+            <li key={m.key}>
+              <button type="button" className={`factor-row${m.available ? "" : " off"}`} onClick={() => onOpen(MODULE_TAB[m.key] ?? "summary")}
+                      aria-label={`${m.label} 등급 ${m.grade}, 점수 ${m.available ? signed(m.score * 100, 0) : "없음"}. 자세히 보기`}>
                 <span className={`grade g-${m.grade.replace("-", "na")}`} aria-hidden="true">{m.grade}</span>
-                <span className="factor-title">{m.label}</span>
-                <span className={`num score ${dirClass(m.score)}`}>{m.available ? signed(m.score * 100, 0) : "-"}</span>
-              </span>
-              <ScoreBar score={m.score} muted={!m.available} />
-              <span className="summary">{m.summary}</span>
-              <span className="factor-foot">
-                <span>신뢰도 {m.available ? pct(m.confidence, 0, false) : "-"}</span>
-                <span>가중치 {pct(v.weights[m.key] ?? 0, 0, false)}</span>
-                <span className={dirClass(contrib)}>기여 {contrib === undefined ? "-" : signed(contrib * 100, 1)}</span>
-                <span className="more" aria-hidden="true">자세히 →</span>
-              </span>
-            </button>
+                <span className="factor-name"><b>{m.label}</b><span className="factor-summary">{m.summary}</span></span>
+                <span className="factor-bar"><ScoreBar score={m.score} muted={!m.available} /></span>
+                <span className={`num factor-score ${dirClass(m.score)}`}>{m.available ? signed(m.score * 100, 0) : "-"}</span>
+                <span className="factor-meta">
+                  <span className={dirClass(contrib)}>기여 {contrib === undefined ? "-" : signed(contrib * 100, 1)}</span>
+                  <span><span>가중치 {pct(v.weights[m.key] ?? 0, 0, false)}</span><span>신뢰도 {m.available ? pct(m.confidence, 0, false) : "-"}</span></span>
+                </span>
+                <Chevron />
+              </button>
+            </li>
           );
         })}
-      </div>
+      </ul>
     </section>
   );
 }
@@ -105,14 +110,19 @@ export function PlanSummary({ r, horizon, onOpen }: { r: Result; horizon: Horizo
   const p = r.simulation.plans[horizon];
   const s = r.simulation.summary[horizon];
   return (
-    <section className="card plan-summary" aria-label="매매 계획 요약">
-      <div><span className="k">진입</span><b className="num">{usd(p.entry)}</b></div>
-      <div><span className="k">손절</span><b className="num down">{usd(p.stop)}</b><small className="num">{pct(p.stop_pct)}</small></div>
-      <div><span className="k">목표</span><b className="num up">{usd(p.target)}</b><small className="num">{pct(p.target_pct)}</small></div>
-      <div><span className="k">목표 먼저 / 손절 먼저</span><b className="num">{pct(p.p_target_first, 0, false)} / {pct(p.p_stop_first, 0, false)}</b></div>
-      <div><span className="k">{HORIZON_LABEL[horizon]} 뒤 90% 범위</span><b className="num">{pct(s.p5, 0)} ~ {pct(s.p95, 0)}</b></div>
-      <div><span className="k">최대 비중</span><b className="num">{pct(p.max_weight, 0, false)}</b></div>
-      <button className="btn ghost" onClick={onOpen}>시뮬레이션 자세히 →</button>
+    <section className="card plan-summary" aria-labelledby="plan-sum-title">
+      <div className="panel-head">
+        <h2 id="plan-sum-title">매매 계획 <span className="sub">{HORIZON_LABEL[horizon]}</span></h2>
+        <button className="btn outline" onClick={onOpen}>시뮬레이션 자세히<Chevron /></button>
+      </div>
+      <dl className="stat-row">
+        <div><dt>진입</dt><dd className="num">{usd(p.entry)}</dd></div>
+        <div><dt>손절</dt><dd className="num down">{usd(p.stop)}<small>{pct(p.stop_pct)}</small></dd></div>
+        <div><dt>목표</dt><dd className="num up">{usd(p.target)}<small>{pct(p.target_pct)}</small></dd></div>
+        <div><dt>목표 먼저 / 손절 먼저</dt><dd className="num">{pct(p.p_target_first, 0, false)} / {pct(p.p_stop_first, 0, false)}</dd></div>
+        <div><dt>{HORIZON_SHORT[horizon]} 뒤 90% 범위</dt><dd className="num">{pct(s.p5, 0)} ~ {pct(s.p95, 0)}</dd></div>
+        <div><dt>최대 비중</dt><dd className="num">{pct(p.max_weight, 0, false)}</dd></div>
+      </dl>
     </section>
   );
 }
@@ -122,7 +132,7 @@ export function PlanCard({ r, horizon }: { r: Result; horizon: Horizon }) {
   const s = r.simulation.summary;
   return (
     <section className="card plan" aria-labelledby="plan-title">
-      <h2 id="plan-title">매매 계획 · 몬테카를로 시뮬레이션 <span className="sub">{HORIZON_LABEL[horizon]}</span></h2>
+      <h2 id="plan-title">매매 계획과 몬테카를로 시뮬레이션 <span className="sub">{HORIZON_LABEL[horizon]}</span></h2>
       <div className="plan-grid">
         <dl className="kv">
           <div><dt>진입가</dt><dd className="num">{usd(p.entry)}</dd></div>
@@ -132,12 +142,12 @@ export function PlanCard({ r, horizon }: { r: Result; horizon: Horizon }) {
           <div><dt>목표 먼저 도달</dt><dd className="num up">{pct(p.p_target_first, 0, false)}</dd></div>
           <div><dt>손절 먼저 도달</dt><dd className="num down">{pct(p.p_stop_first, 0, false)}</dd></div>
           <div><dt>기대 수익 (시뮬)</dt><dd className={`num ${dirClass(p.expected_return, 0.001)}`}>{pct(p.expected_return)}</dd></div>
-          <div><dt>계좌 대비 최대 비중</dt><dd className="num">{pct(p.max_weight, 0, false)}{p.kelly_half !== null && <small> · 하프 켈리 {pct(p.kelly_half, 0, false)}</small>}</dd></div>
+          <div><dt>계좌 대비 최대 비중</dt><dd className="num">{pct(p.max_weight, 0, false)}{p.kelly_half !== null && <small> (하프 켈리 {pct(p.kelly_half, 0, false)})</small>}</dd></div>
         </dl>
         <div>
           <FanChart fan={s.fan} days={s[horizon].days} price={p.entry} stop={p.stop} target={p.target} />
           <p className="hint">손절·목표 = <Term k="ATR" />({num(p.atr, 2)}) x {p.atr_mult[0]} / {p.atr_mult[1]}. 비중은 1회 손실을 계좌의 1%로 묶는 기준(최대 25%).
-            경로 {r.simulation.paths.toLocaleString()}개 · 최근 3년 수익률 블록 부트스트랩 · 기대수익은 CAPM {pct(r.simulation.drift)} 로 맞춤(과거 추세를 미래로 늘리지 않음).</p>
+            경로 {r.simulation.paths.toLocaleString()}개, 최근 3년 수익률 블록 부트스트랩. 기대수익은 CAPM {pct(r.simulation.drift)} 로 맞춤(과거 추세를 미래로 늘리지 않음).</p>
         </div>
       </div>
       <div className="table-wrap"><table className="table compact">
@@ -184,7 +194,7 @@ export function TrendCard({ r }: { r: Result }) {
   const lv = Object.entries(r.technical.levels).filter(([, x]) => x !== null) as [string, number][];
   return (
     <section className="card">
-      <h2>추세 · 시장 국면</h2>
+      <h2>추세와 시장 국면</h2>
       <dl className="kv">
         <div><dt>1개월</dt><dd className={`num ${dirClass(t.ret_1m as number, 0.001)}`}>{pct(t.ret_1m as number)}</dd></div>
         <div><dt>3개월</dt><dd className={`num ${dirClass(t.ret_3m as number, 0.001)}`}>{pct(t.ret_3m as number)}</dd></div>
