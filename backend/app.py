@@ -19,6 +19,7 @@ import hmac
 import json
 import logging
 import os
+import secrets
 import time
 import uuid
 from collections import defaultdict, deque
@@ -89,8 +90,14 @@ def _password() -> str:
     return os.environ.get("APP_PASSWORD", "")
 
 
+# 서명 키 = HMAC(서버 비밀값, 비밀번호). 비밀번호만으로 키를 만들면 코드가 공개라서, 짧은 비밀번호는 쿠키를 만들어
+# /auth/me 에 대 보는 식으로 로그인 잠금 없이 맞힐 수 있다. 비밀번호를 바꾸면 기존 세션이 모두 끊긴다.
+# ponytail: SESSION_SECRET 이 없으면 프로세스마다 무작위 값이라 재시작하면 다시 로그인해야 한다 (워커가 여럿이면 필수).
+_SERVER_KEY = os.environ.get("SESSION_SECRET", "").encode() or secrets.token_bytes(32)
+
+
 def _secret() -> bytes:
-    return hashlib.sha256(("kaspflow-session:" + _password()).encode()).digest()  # 비밀번호를 바꾸면 기존 세션이 모두 끊긴다
+    return hmac.new(_SERVER_KEY, _password().encode(), hashlib.sha256).digest()
 
 
 def make_token(now: float | None = None) -> str:

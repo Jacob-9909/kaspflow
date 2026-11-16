@@ -71,4 +71,4 @@ sequenceDiagram
 - CI: `ci-backend.yml` (유닛 + postgres:17 통합 테스트 + 이미지 import 검사), `ci-frontend.yml` (타입 검사 + 빌드).
 - CD: `publish-images.yml` (테스트 → amd64/arm64 이미지 → GHCR) + VM 의 `kaspflow-autodeploy.timer` (2분 폴링,
   CI 게이트, 커밋별 이미지 태그, `/health` 실패 시 롤백). 자세한 절차는 [../infra/vm-setup.md](../infra/vm-setup.md).
-- 비밀값은 VM 의 `~/kaspflow/.env` 에만 있다: `POSTGRES_PASSWORD`, `NVIDIA_API_KEY(_2)`, `APP_PASSWORD`.
+- 비밀값은 VM 의 `~/kaspflow/.env` 에만 있다: `POSTGRES_PASSWORD`, `NVIDIA_API_KEY(_2)`, `APP_PASSWORD`, `SESSION_SECRET`(쿠키 서명 키).
