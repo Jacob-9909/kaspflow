@@ -1,340 +1,176 @@
 /**
- * API 클라이언트: 백엔드(FastAPI)와 통신하는 함수들
- * ============================================================
- * [이 파일이 하는 일]
- *   백엔드의 /symbols, /ohlc 엔드포인트를 호출해 결과를 타입 안전하게 돌려준다.
- *
- * [경로 규칙]
- *   모든 요청은 "/api" 접두사를 붙인다.
- *   - 개발(vite dev): vite.config.ts 프록시가 /api -> localhost:8000 으로 전달
- *   - 배포(nginx):    nginx가 /api -> backend:8000 으로 프록시
- *   덕분에 브라우저에서는 항상 같은 출처라 CORS 문제가 없다.
- *
- * [데이터 흐름에서의 위치]
- *   ... -> Postgres -> FastAPI -> [이 api.ts] -> React 컴포넌트 -> 차트
+ * 백엔드 호출과 응답 타입. 모든 요청은 같은 출처의 /api 로 간다 (Caddy·nginx·vite 가 백엔드로 넘긴다).
+ * 결과(Result) 타입은 backend/pipeline.py 의 result dict 와 맞춘다.
  */
+export type Verdict = "buy" | "hold" | "sell";
+export type Horizon = "short" | "mid" | "long";
+export type Candle = [number, number, number, number, number, number]; // t, o, h, l, c, v
+export type Point = [number, number];
 
-// 백엔드 /ohlc 가 돌려주는 캔들 1개의 형태 (init.sql의 ohlc_1m 컬럼과 동일)
-export interface Candle {
-  symbol: string;
-  window_start: string; // ISO8601 문자열 (예: "2026-09-25T07:44:00Z")
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  trade_count: number;
+export interface SearchHit { symbol: string; name: string; type: string; exchange: string }
+
+export interface Quote {
+  symbol: string; name: string; type: string; exchange: string | null; sector: string | null; industry: string | null;
+  currency: string; market_cap: number | null; price: number; change: number; high52: number; low52: number;
+  as_of: string; summary: string; candles: Candle[]; sma50: Point[]; sma200: Point[];
 }
 
-// /ohlc 응답 전체 형태
-interface OhlcResponse {
-  symbol: string;
-  count: number;
-  earliest?: string | null; // 저장된 가장 오래된 버킷의 시작 시각 (과거 끝 판단용, 구버전 백엔드엔 없음)
-  candles: Candle[];
+export interface VerdictInfo {
+  horizon: Horizon; verdict: Verdict; label: string; strong: boolean; score: number; confidence: number;
+  agreement: number; coverage: number; contributions: Record<string, number>; weights: Record<string, number>; notes: string[];
 }
 
-/** fetchOhlc 결과: 봉 + 저장소의 가장 오래된 버킷 시각 */
-export interface OhlcPage {
-  candles: Candle[];
-  earliest: string | null;
+export interface ModuleCard { key: string; label: string; available: boolean; score: number; confidence: number; grade: string; summary: string }
+
+export interface Metrics {
+  total_return: number | null; cagr: number | null; vol: number | null; sharpe: number | null; sortino: number | null;
+  max_drawdown: number | null; calmar: number | null; trades: number; win_rate: number | null; profit_factor: number | null;
+  avg_win: number | null; avg_loss: number | null; avg_days: number | null; exposure: number | null;
 }
 
-// /symbols 응답 형태
-interface SymbolsResponse {
-  symbols: string[];
+export interface Marker { time: number; side: "buy" | "sell"; price: number; ret?: number }
+
+export interface StrategyResult {
+  key: string; label: string; family: "trend" | "reversion" | "day"; origin: string; rule: string; variants: number;
+  best_full: { params: Record<string, number>; metrics: Metrics };
+  wf: null | { folds: { oos_start: string; oos_end: string; params: Record<string, number>; is_sharpe: number; oos_sharpe: number }[];
+    metrics: Metrics; efficiency: number | null; equity: Point[]; bh_equity: Point[] };
+  perm_p: number | null; dsr: number | null;
+  mc: null | { ret_p5: number; ret_p50: number; ret_p95: number; mdd_p5: number; mdd_p50: number };
+  grade: string; weight: number;
+  current: { params: Record<string, number>; decision: number; fresh: boolean; since_days: number | null; vote: number;
+    levels: Record<string, number | null> };
+  markers: Marker[];
 }
 
-/** 공통 fetch 헬퍼: 실패하면 에러를 던진다. (백엔드가 detail 을 주면 그 메시지를 사용) */
-async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    let detail = "";
-    try {
-      const body = (await res.json()) as { detail?: unknown };
-      if (typeof body.detail === "string") detail = body.detail;
-    } catch {
-      /* JSON 이 아니면 무시 */
-    }
-    throw new Error(detail || `요청 실패 (${res.status}): ${url}`);
-  }
-  return (await res.json()) as T;
+export interface Plan {
+  entry: number; stop: number; target: number; stop_pct: number; target_pct: number; reward_risk: number | null;
+  p_target_first: number; p_stop_first: number; p_neither: number; expected_return: number; atr: number;
+  atr_mult: [number, number]; max_weight: number | null; kelly_half: number | null;
 }
 
-/** 저장된 심볼 목록을 가져온다. */
-export async function fetchSymbols(): Promise<string[]> {
-  const data = await getJson<SymbolsResponse>("/api/symbols");
-  return data.symbols;
+export interface HorizonSim { days: number; p_up: number; median: number; p5: number; p25: number; p75: number; p95: number; cvar95: number }
+
+export interface Fan { days: number[]; p5: number[]; p25: number[]; p50: number[]; p75: number[]; p95: number[] }
+
+export interface Analog {
+  available: boolean; score: number; confidence: number; summary: string; state?: string; horizon_days?: number; n?: number;
+  n_eff?: number; mean?: number; median?: number; hit_rate?: number; base_mean?: number; base_hit_rate?: number; t_stat?: number;
+  hist?: { counts: number[]; edges: number[] };
 }
 
-/**
- * 특정 심볼의 봉을 시간 오름차순으로 가져온다. interval 기본 1m.
- * before 를 주면 그 시각보다 이전의 봉만 받는다(왼쪽으로 스크롤할 때 과거를 이어 붙이는 용도).
- */
-export async function fetchOhlcPage(
-  symbol: string,
-  interval = "1m",
-  limit = 120,
-  before?: string,
-): Promise<OhlcPage> {
-  const params = new URLSearchParams({ symbol, interval, limit: String(limit) });
-  if (before) params.set("before", before);
-  const data = await getJson<OhlcResponse>(`/api/ohlc?${params.toString()}`);
-  return { candles: data.candles, earliest: data.earliest ?? null };
+export interface Check { name: string; pass: boolean | null; value?: string | null }
+
+export interface Persona {
+  name: string; philosophy: string; checklist: Check[]; rule_score: number | null; score: number | null; error: string | null;
+  view: null | { signal: "bullish" | "neutral" | "bearish"; confidence: number; thesis: string; positives: string[]; negatives: string[] };
 }
-
-/** 지원하는 봉 간격 목록 (예: ["1m","5m","15m","30m","1h","4h","1d"]). */
-export async function fetchIntervals(): Promise<string[]> {
-  try {
-    const data = await getJson<{ intervals: string[] }>("/api/intervals");
-    return data.intervals;
-  } catch {
-    // 백엔드가 구버전이면 최소한 1m 은 되도록 폴백
-    return ["1m"];
-  }
-}
-
-// ============================================================
-// 백테스트 (midas-touch 전략 이식, 백엔드 backtest.py)
-// ============================================================
-
-/** 전략 정보: /backtest/strategies 의 항목 */
-export interface StrategyInfo {
-  id: string;
-  label: string;
-  params: Record<string, number>; // 기본 파라미터 (입력 폼의 초기값)
-  requires_news?: boolean; // 뉴스 신호가 필요한 전략 (news_sentiment). 구버전 백엔드엔 없음
-}
-
-/** 체결 가격 선택: auto = 서버 기본(뉴스 전략은 다음 봉 시가, 나머지는 종가) */
-export type FillMode = "auto" | "close" | "next_open";
-
-/** 백테스트 실행 설정 (UI 입력값). 손절/익절/추격은 비율(0.02 = 2%), null = 미사용 */
-export interface BacktestConfig {
-  strategy: string;
-  limit: number; // 백테스트에 쓸 최근 봉 수 (차트도 같은 수를 불러온다)
-  initialCapital: number;
-  feeBps: number;
-  stopLossPct: number | null;
-  takeProfitPct: number | null;
-  trailingStopPct: number | null;
-  fill: FillMode;
-  params: Record<string, number>;
-}
-
-/** 차트에 찍을 매수/매도 이벤트. time 은 lightweight-charts 와 같은 UTC epoch 초 */
-export interface BacktestMarker {
-  time: number;
-  side: "buy" | "sell";
-  price: number;
-  reason: string; // signal | stop_loss | take_profit | trailing_stop | news_expired
-  pnl_pct: number | null; // 매도 시 손익(수수료 반영), 매수는 null
-}
-
-export interface BacktestTrade {
-  entry_time: number;
-  exit_time: number;
-  entry_price: number;
-  exit_price: number;
-  qty: number;
-  pnl_pct: number;
-  pnl_amount: number;
-  exit_reason: string;
-  bars_held: number;
-}
-
-export interface BacktestMetrics {
-  total_return: number;
-  buy_hold_return: number;
-  max_drawdown: number;
-  final_value: number;
-  trade_count: number;
-  win_rate: number;
-  profit_factor: number;
-  avg_win_pct: number;
-  avg_loss_pct: number;
-  sharpe_ratio: number;
-  exposure_pct: number;
-  exit_reasons: Record<string, number>;
-}
-
-/** 비교용 기준선 요약 (같은 기간·같은 비용·같은 체결 방식) */
-export interface BaselineSummary {
-  total_return: number;
-  max_drawdown: number;
-  trade_count: number;
-  win_rate: number;
-  sharpe_ratio: number;
-}
-
-export interface BacktestResult {
-  symbol: string;
-  interval: string;
-  strategy: string;
-  label: string;
-  fill?: string; // close | next_open (구버전 백엔드엔 없음)
-  news?: { articles: number; bars_with_signal: number; model_version: string | null }; // news_sentiment 일 때만
-  baselines?: { combined: BaselineSummary; buy_hold: BaselineSummary }; // compare=true 일 때만
-  bars: number;
-  initial_capital: number;
-  params_used: Record<string, number>;
-  metrics: BacktestMetrics;
-  trades: BacktestTrade[];
-  markers: BacktestMarker[];
-  open_position: {
-    entry_time: number;
-    entry_price: number;
-    qty: number;
-    unrealized_pct: number;
-  } | null;
-  warnings: string[];
-}
-
-interface StrategiesResponse {
-  strategies: StrategyInfo[];
-  risk_defaults: { fee_bps: number };
-}
-
-/** 전략 목록 + 기본 리스크 설정. 구버전 백엔드(미지원)면 null -> 패널을 숨긴다. */
-export async function fetchBacktestStrategies(): Promise<StrategiesResponse | null> {
-  try {
-    return await getJson<StrategiesResponse>("/api/backtest/strategies");
-  } catch {
-    return null;
-  }
-}
-
-/** 선택한 봉 간격(interval)으로 백테스트를 실행한다. */
-export async function fetchBacktest(
-  symbol: string,
-  interval: string,
-  cfg: BacktestConfig,
-): Promise<BacktestResult> {
-  const q = new URLSearchParams({
-    symbol,
-    interval,
-    strategy: cfg.strategy,
-    limit: String(cfg.limit),
-    initial_capital: String(cfg.initialCapital),
-    fee_bps: String(cfg.feeBps),
-  });
-  if (cfg.stopLossPct !== null) q.set("stop_loss_pct", String(cfg.stopLossPct));
-  if (cfg.takeProfitPct !== null) q.set("take_profit_pct", String(cfg.takeProfitPct));
-  if (cfg.trailingStopPct !== null) q.set("trailing_stop_pct", String(cfg.trailingStopPct));
-  if (cfg.fill !== "auto") q.set("fill", cfg.fill);
-  q.set("compare", "true"); // 복합 전략·단순 보유 기준선을 함께 받는다
-  if (Object.keys(cfg.params).length > 0) q.set("params", JSON.stringify(cfg.params));
-  return getJson<BacktestResult>(`/api/backtest?${q.toString()}`);
-}
-
-// ============================================================
-// 뉴스·감정 시그널 (백엔드 news_queries.py / docs/news-signal-design.md)
-//   뉴스 테이블이 없거나 아직 수집 전이면 백엔드가 503 을 준다 -> 아래 함수들은 null 을 돌려주고
-//   화면은 뉴스 기능만 조용히 숨긴다 (시세·백테스트는 그대로).
-// ============================================================
-
-export type Sentiment = "positive" | "neutral" | "negative";
 
 export interface NewsItem {
-  article_id: string;
-  symbol: string; // BTCUSDT ... 또는 MARKET
-  source: string;
-  title: string;
-  url: string;
-  published_at: string | null;
-  collected_at: string; // ISO8601 — 차트에서는 이 시각이 속한 봉에 찍는다
-  p_relevant: number | null;
-  p_pos: number | null;
-  p_neu: number | null;
-  p_neg: number | null;
-  event_type: string | null;
-  p_event: Record<string, number> | null; // 이벤트 유형 전체 확률 분포
-  sentiment: Sentiment | null;
-  model_version: string;
+  id: string; title: string; source: string; url: string; published: string; summary?: string;
+  relevance?: number; sentiment?: number; impact?: string; event?: string; title_ko?: string;
 }
 
-export async function fetchNews(symbol: string, since?: string, limit = 200): Promise<NewsItem[] | null> {
-  const q = new URLSearchParams({ symbol, limit: String(limit) });
-  if (since) q.set("since", since);
-  try {
-    return (await getJson<{ news: NewsItem[] }>(`/api/news?${q.toString()}`)).news;
-  } catch {
-    return null;
+export interface FieldRow { method: string; low: number; mid: number; high: number }
+
+export interface Result {
+  version: number; symbol: string; name: string; horizon: Horizon; as_of: string; ppy: number; run_id?: string; created_at?: string;
+  position: { qty: number; avg_price: number } | null;
+  quote: { symbol: string; name: string; price: number; change: number; currency: string; exchange: string | null; type: string;
+    sector: string | null; industry: string | null; market_cap: number | null; as_of: string; partial_bar: boolean };
+  verdict: VerdictInfo; verdicts: Record<Horizon, VerdictInfo>;
+  advice: { holding: boolean; pnl: number | null; text: string };
+  narrative: { headline: string; summary: string; bull: string[]; bear: string[]; risks: string[]; triggers: string[] };
+  modules: ModuleCard[];
+  technical: { summary: string; levels: Record<string, number | null>; detail: Record<string, number | boolean | null> };
+  regime: { summary: string; available: boolean; score: number; detail: Record<string, unknown> };
+  risk: { vol_1y: number; beta: number | null; mdd_1y: number; mdd_5y: number; var95_1d: number; atr: number; atr_pct: number; level: string };
+  analogs: Record<Horizon, Analog>;
+  validation: { strategies: StrategyResult[]; n_trials: number; sr0_annual: number; folds: number; bars: number; start: string; end: string;
+    buy_hold: { full: Metrics; oos: Metrics | null } };
+  simulation: { summary: Record<Horizon, HorizonSim> & { fan: Fan }; plans: Record<Horizon, Plan>; drift: number; paths: number };
+  fundamentals: {
+    facts: Record<string, string>;
+    quality: { available: boolean; score: number; summary: string; groups: Record<string, number>; altman_z: number | null;
+      piotroski: null | { score: number; max: number; checks: Check[] } };
+    valuation: { available: boolean; score: number; summary: string; fair_value: number | null; upside: number | null;
+      football_field: FieldRow[]; models?: Record<string, number>; notes?: string[]; multiples?: Record<string, number | null>;
+      dcf: null | { per_share: number; growth: number; growth_sources: string[]; wacc: number; cost_of_equity: number; beta: number;
+        terminal_growth: number; tv_share: number | null; implied_growth: number;
+        sensitivity: { wacc: number[]; g_term: number[]; values: number[][] } } };
+    consensus: { available: boolean; score: number; summary: string; detail?: Record<string, unknown>;
+      recent?: { date: string; firm: string; to: string; from: string; action: string; target: number | null }[] };
+  };
+  news: { aggregate: { available: boolean; score: number; summary: string; drivers?: { title: string; sentiment: number; event: string; date: string }[];
+    events?: Record<string, number>; recent_7d?: number | null; older?: number | null }; items: NewsItem[]; error: string | null };
+  personas: { available: boolean; score: number; summary: string; members: Record<string, Persona>; error?: string };
+  chart: { candles: Candle[]; sma50: Point[]; sma200: Point[] };
+  meta: { duration_ms: number; llm_model: string | null; llm_calls: number | null; narrative_error: string | null; disclaimer: string };
+}
+
+export interface RunRow {
+  id: string; symbol: string; name: string; created_at: string; horizon: Horizon; verdict: Verdict; score: number; confidence: number;
+  price: number; headline: string | null; due: string; evaluated: boolean; return: number | null; hit: boolean | null; current: number | null;
+}
+
+export interface RunsResponse {
+  runs: RunRow[];
+  stats: { evaluated: number; hit_rate: number | null; by_verdict: Partial<Record<Verdict, { n: number; hit_rate: number; avg_return: number }>> };
+}
+
+export interface Me { authenticated: boolean; login_enabled: boolean; llm: boolean }
+
+export type StreamEvent =
+  | { type: "start"; steps: [string, string][]; queued: boolean }
+  | { type: "step"; step: string; status: "running" | "done"; detail?: string; ms?: number }
+  | { type: "done"; run_id: string | null; data: Result }
+  | { type: "error"; message: string };
+
+async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(`/api${path}`, { credentials: "same-origin", ...init });
+  if (!r.ok) {
+    let msg = `${r.status}`;
+    try {
+      const body = await r.json();
+      msg = typeof body.detail === "string" ? body.detail : msg;
+    } catch { /* 본문이 JSON 이 아니면 상태 코드만 */ }
+    throw new Error(msg);
   }
+  return r.json() as Promise<T>;
 }
 
-export interface NewsScorePoint {
-  time: number; // 봉 시작 (UTC epoch 초, 캔들과 같은 값)
-  score: number; // news_score (-1 ~ 1)
-  weight: number;
-  count: number;
-}
+export const api = {
+  me: () => getJSON<Me>("/auth/me"),
+  login: (password: string) => getJSON<{ ok: boolean }>("/auth/login", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) }),
+  logout: () => getJSON<{ ok: boolean }>("/auth/logout", { method: "POST" }),
+  search: (q: string) => getJSON<SearchHit[]>(`/search?q=${encodeURIComponent(q)}`),
+  quote: (symbol: string) => getJSON<Quote>(`/quote/${encodeURIComponent(symbol)}`),
+  runs: (symbol?: string) => getJSON<RunsResponse>(`/runs${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`),
+  run: (id: string) => getJSON<Result>(`/runs/${encodeURIComponent(id)}`),
+};
 
-export async function fetchNewsScore(symbol: string, interval: string, limit: number): Promise<NewsScorePoint[] | null> {
-  const q = new URLSearchParams({ symbol, interval, limit: String(Math.min(Math.max(limit, 10), 5000)) });
-  try {
-    return (await getJson<{ series: NewsScorePoint[] }>(`/api/news/score?${q.toString()}`)).series;
-  } catch {
-    return null;
+/** 검증·시뮬레이션 실행. EventSource 는 같은 출처 쿠키를 자동으로 보낸다. 반환값으로 연결을 끊는다. */
+export function analyze(symbol: string, horizon: Horizon, position: { qty: number; avg: number } | null,
+                        onEvent: (e: StreamEvent) => void): () => void {
+  const q = new URLSearchParams({ horizon });
+  if (position) {
+    q.set("qty", String(position.qty));
+    q.set("avg", String(position.avg));
   }
-}
-
-export interface NewsHealth {
-  status: "ok" | "stale" | "empty";
-  last_collected_at: string | null;
-  age_minutes: number | null;
-  stale_after_minutes: number;
-  articles_24h: number;
-  signals_24h: number;
-  model_version: string | null;
-}
-
-export async function fetchNewsHealth(): Promise<NewsHealth | null> {
-  try {
-    return await getJson<NewsHealth>("/api/news/health");
-  } catch {
-    return null;
-  }
-}
-
-// Laya 흐름 패널 (/news/pipeline): 수집 -> 매칭 -> 분류 단계별 건수와 가장 최근 정확도 측정
-export interface NewsPipeline {
-  hours: number;
-  model_version: string | null;
-  collected: number; // 기간 안에 수집된 기사
-  with_signal: number; // 종목 매칭 또는 시장 전체 판정으로 신호가 생긴 기사
-  dropped: number; // 매칭 없음 + 시장 전체 아님 -> 신호 없음
-  sources: { source: string; n: number; with_signal: number }[];
-  symbols: {
-    symbol: string;
-    n: number;
-    positive: number;
-    neutral: number;
-    negative: number;
-    avg_score: number | null;
-    fresh: number; // 발행 6시간 안에 수집된 신호 (전략 max_age 기본값 기준)
-  }[];
-  events: { event_type: string; n: number }[];
-  lag_24h: { n: number; p50_s: number | null; p90_s: number | null }; // 수집 -> 신호 저장 지연 (초)
-  eval: {
-    run_at: string;
-    labels: string; // 'news_label' = 사람 라벨, 그 외 = CSV 파일 이름(대리 라벨)
-    field: "relevance" | "sentiment" | "event_type";
-    n: number;
-    acc: number;
-    baseline: number;
-    ece_raw: number;
-    ece_cal: number | null;
-    temperature: number | null;
-    passed: boolean;
-  }[];
-  strategy_defaults: Record<string, number>;
-}
-
-export async function fetchNewsPipeline(hours = 168): Promise<NewsPipeline | null> {
-  try {
-    return await getJson<NewsPipeline>(`/api/news/pipeline?hours=${hours}`);
-  } catch {
-    return null;
-  }
+  const es = new EventSource(`/api/analyze/${encodeURIComponent(symbol)}?${q}`);
+  let finished = false;
+  es.onmessage = (m) => {
+    const ev = JSON.parse(m.data) as StreamEvent;
+    if (ev.type === "done" || ev.type === "error") {
+      finished = true;
+      es.close();
+    }
+    onEvent(ev);
+  };
+  es.onerror = () => {
+    if (!finished) onEvent({ type: "error", message: "서버와 연결이 끊겼습니다. 분석은 서버에서 계속되며 끝나면 기록에 저장됩니다." });
+    es.close();
+  };
+  return () => es.close();
 }

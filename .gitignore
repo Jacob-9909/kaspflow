@@ -4,7 +4,8 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-.env                    # 실제 비밀/설정 값. .env.example만 커밋한다.
+# 실제 비밀/설정 값. .env.example 만 커밋한다. (주석을 패턴과 같은 줄에 쓰면 패턴이 깨진다)
+.env
 
 # --- Spark ---
 # 스트리밍 체크포인트(offset/state 저장). 로컬 실행 시 생성되며 커밋하면 안 됨.

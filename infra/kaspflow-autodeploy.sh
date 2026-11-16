@@ -11,7 +11,7 @@
 # 하는 일:
 #   1) origin/main 이 로컬과 다르면 감지
 #   2) (선택) GitHub check-runs 로 publish-images/CI 통과한 커밋만 배포 (CI 게이트)
-#   3) git pull → docker compose pull → up -d
+#   3) git pull → docker compose pull → up -d --remove-orphans
 #   4) 헬스체크(backend /health) 실패 시 직전 커밋으로 롤백
 #
 # 이미지 태그: 커밋마다 publish-images 가 만드는 :sha-<7자리> 를 쓴다 (IMAGE_TAG 를 셸에서 넘기면
@@ -87,7 +87,8 @@ deploy_and_wait() {
   export IMAGE_TAG="sha-${1:0:7}"
   # .env 는 REPO_DIR 에 있어야 한다 (compose가 자동으로 읽음)
   docker compose -f "$COMPOSE" pull -q 2>/dev/null || docker compose -f "$COMPOSE" pull || return 1
-  docker compose -f "$COMPOSE" up -d || return 1
+  # --remove-orphans: compose 파일에서 빠진 서비스(2026-11-16 에 내린 kafka/spark 등)의 컨테이너를 정리한다
+  docker compose -f "$COMPOSE" up -d --remove-orphans || return 1
   # backend 헬스가 초록(=DB까지 연결)일 때까지 대기 (최대 ~120초)
   for _ in $(seq 1 24); do
     sleep 5

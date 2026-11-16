@@ -1,176 +1,21 @@
 # ============================================================
-# 프로덕션 compose (Oracle VM 배포용)
+# 프로덕션 compose (oracle_vm 배포용): backend + dashboard 두 개만
 # ------------------------------------------------------------
-# 로컬 개발용 docker-compose.yml 과의 차이:
-#   1) 이미지를 로컬 빌드(build:)하지 않고 GHCR에서 pull (image:)
-#   2) postgres 컨테이너 없음 → VM에 이미 깔린 네이티브 PostgreSQL 17 재사용
-#      (컨테이너들은 host.docker.internal:5432 로 호스트 PG에 붙는다)
-#   3) Spark 에 메모리 상한을 걸어 호스트(PG 포함)를 OOM 에서 보호
+# 로컬 docker-compose.yml 과 다른 점
+#   1) 이미지를 GHCR 에서 받는다 (publish-images 워크플로가 커밋마다 :sha-xxxxxxx 로 올림)
+#   2) postgres 컨테이너가 없다. VM 의 네이티브 PostgreSQL 17 (crypto DB, stock 스키마)을 쓴다
+#   3) 포트는 127.0.0.1 에만 연다. 바깥에서는 Caddy(443) 로만 들어온다 (예전 8501 평문 노출 제거)
+# 2026-11-16 재설계: 코인 실시간 파이프라인(kafka, kafka-ui, producer, spark, news-collector,
+#   signal-worker)을 내렸다. 남은 컨테이너는 자동배포의 `up -d --remove-orphans` 가 정리한다.
 #
-# 사용:
-#   # 이미지 태그(레포 소문자)와 DB 접속정보는 .env 로 주입
-#   docker compose -f docker-compose.prod.yml pull
-#   docker compose -f docker-compose.prod.yml up -d
-#
-# .env 에 필요한 값 (VM에만 두고 git 에는 커밋 금지):
-#   IMAGE_PREFIX=ghcr.io/<owner>/<repo>       예: ghcr.io/jacob-9909/kaspflow
-#   IMAGE_TAG=latest                          (손으로 돌릴 때. 자동배포는 커밋별 sha-xxxxxxx 를 넘긴다)
-#   KAFKA_TOPIC=crypto-trades
-#   SYMBOLS=BTCUSDT,ETHUSDT,XRPUSDT
-#   (선택) NEWS_TOPIC / NEWS_POLL_SECONDS / NEWS_FEEDS  — news-collector, 기본값 있음
-#   POSTGRES_HOST=host.docker.internal
-#   POSTGRES_PORT=5432
-#   POSTGRES_DB=crypto
-#   POSTGRES_USER=crypto
-#   POSTGRES_PASSWORD=<강한암호>
+# .env (VM 에만, git 커밋 금지. 값 뒤에 # 주석을 달지 말 것)
+#   IMAGE_PREFIX=ghcr.io/jacob-9909/kaspflow
+#   BACKEND_HOST_PORT=8010          (8000 은 midas-touch 가 쓴다. Caddy 의 /api 업스트림과 같아야 함)
+#   POSTGRES_HOST=host.docker.internal / POSTGRES_PORT / POSTGRES_DB=crypto / POSTGRES_USER=crypto / POSTGRES_PASSWORD
+#   NVIDIA_API_KEY, NVIDIA_API_KEY_2  (midas-touch/.env 의 키를 복사)
+#   APP_PASSWORD                      (실행 버튼 비밀번호)
 # ============================================================
-
 services:
-  # ----------------------------------------------------------
-  # Kafka (KRaft) — 로컬 compose와 동일 구성, 이미지만 그대로 사용
-  # ----------------------------------------------------------
-  kafka:
-    image: confluentinc/cp-kafka:7.7.0
-    container_name: kafka
-    restart: unless-stopped
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
-      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,EXTERNAL://0.0.0.0:19092"
-      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:9092,EXTERNAL://localhost:19092"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
-      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
-    # 메모리 상한: 12GB VM에서 안전하게
-    mem_limit: 1500m
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  # ----------------------------------------------------------
-  # Kafka UI — 운영 중 토픽/메시지 확인용 (선택, 8080)
-  # ----------------------------------------------------------
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: kafka-ui
-    restart: unless-stopped
-    depends_on:
-      kafka:
-        condition: service_healthy
-    ports:
-      # 호스트 8080이 다른 서비스(supermemory 등)와 겹칠 수 있어 8090으로 노출
-      - "8090:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: "local"
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:9092"
-    mem_limit: 400m
-
-  # ----------------------------------------------------------
-  # Producer — GHCR 이미지
-  # ----------------------------------------------------------
-  producer:
-    image: ${IMAGE_PREFIX}-producer:${IMAGE_TAG:-latest}
-    container_name: producer
-    restart: unless-stopped
-    depends_on:
-      kafka:
-        condition: service_healthy
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
-      KAFKA_TOPIC: ${KAFKA_TOPIC:-crypto-trades}
-      SYMBOLS: ${SYMBOLS:-BTCUSDT,ETHUSDT,XRPUSDT}
-    mem_limit: 300m
-
-  # ----------------------------------------------------------
-  # News Collector — 코인 매체 RSS 폴링 -> Kafka(news-raw). DB 에 쓰지 않는다(저장은 signal-worker, M2).
-  #   설계: docs/news-signal-design.md. 피드 목록/주기는 .env 의 NEWS_FEEDS / NEWS_POLL_SECONDS 로 바꾼다.
-  # ----------------------------------------------------------
-  news-collector:
-    image: ${IMAGE_PREFIX}-news-collector:${IMAGE_TAG:-latest}
-    container_name: news-collector
-    restart: unless-stopped
-    depends_on:
-      kafka:
-        condition: service_healthy
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
-      NEWS_TOPIC: ${NEWS_TOPIC:-news-raw}
-      NEWS_POLL_SECONDS: ${NEWS_POLL_SECONDS:-300}
-      NEWS_FEEDS: ${NEWS_FEEDS:-}
-    mem_limit: 200m
-
-  # ----------------------------------------------------------
-  # Signal Worker — Kafka(news-raw) -> 호스트 PostgreSQL(news_raw / news_signal).
-  #   M2(기본): LAYA_ENABLED=false 저장 전용. 모델 없음 -> 메모리 300m 로 충분.
-  #   M3: .env 에서 LAYA_ENABLED=true, SIGNAL_WORKER_MEM_LIMIT=3g 로 바꾸고 Laya 포함 이미지를 쓴다.
-  #       (맥 실측: 모델 로드 순간 최대 ~2.8GB, 상주 ~2.1GB -> 설계서의 2.5GB 상한은 모자랄 수 있다.
-  #        VM 에서 docker stats 로 실측해 조정. compose 파일이 아니라 .env 로 바꾼다.)
-  #   선행: db/news.sql 을 호스트 PG 에 적용해 둘 것 (sudo -u postgres psql -d crypto -f db/news.sql).
-  # ----------------------------------------------------------
-  signal-worker:
-    image: ${IMAGE_PREFIX}-signal-worker:${IMAGE_TAG:-latest}
-    container_name: signal-worker
-    restart: unless-stopped
-    depends_on:
-      kafka:
-        condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
-      NEWS_TOPIC: ${NEWS_TOPIC:-news-raw}
-      POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-      POSTGRES_DB: ${POSTGRES_DB:-crypto}
-      POSTGRES_USER: ${POSTGRES_USER:-crypto}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 설정하세요}
-      LAYA_ENABLED: ${LAYA_ENABLED:-false}
-      LAYA_CHECKPOINT: ${LAYA_CHECKPOINT:-convaiinnovations/laya}
-      LAYA_THREADS: ${LAYA_THREADS:-2}
-      LAYA_MARKET_MIN_P: ${LAYA_MARKET_MIN_P:-0.9}
-    volumes:
-      # Hugging Face 캐시: 재배포마다 808MB 를 다시 받지 않게 한다
-      - hf-cache:/hf-cache
-    mem_limit: ${SIGNAL_WORKER_MEM_LIMIT:-300m}
-
-  # ----------------------------------------------------------
-  # Spark — GHCR 이미지. 호스트 PostgreSQL(host.docker.internal)로 저장.
-  #   메모리 상한 + driver memory 로 호스트 보호.
-  # ----------------------------------------------------------
-  spark:
-    image: ${IMAGE_PREFIX}-spark:${IMAGE_TAG:-latest}
-    container_name: spark
-    restart: unless-stopped
-    depends_on:
-      kafka:
-        condition: service_healthy
-    # 호스트 게이트웨이를 host.docker.internal 이름으로 접근 가능하게
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
-      KAFKA_TOPIC: ${KAFKA_TOPIC:-crypto-trades}
-      POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-      POSTGRES_DB: ${POSTGRES_DB:-crypto}
-      POSTGRES_USER: ${POSTGRES_USER:-crypto}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 설정하세요}
-    mem_limit: 2g
-
-  # ----------------------------------------------------------
-  # Backend API — GHCR 이미지. 호스트 PostgreSQL 조회.
-  #   호스트에 publish 되는 포트는 .env 의 BACKEND_HOST_PORT (기본 8000).
-  #   Oracle VM 처럼 8000 을 다른 서비스(midas-touch)가 쓰면 .env 에 BACKEND_HOST_PORT=8010 을 둔다.
-  #   (compose 파일을 직접 고치면 자동배포의 롤백(git reset --hard)이 수정을 지워 버린다. .env 는 git 추적 밖이라 안전.)
-  # ----------------------------------------------------------
   backend:
     image: ${IMAGE_PREFIX}-backend:${IMAGE_TAG:-latest}
     container_name: backend
@@ -178,18 +23,23 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${BACKEND_HOST_PORT:-8000}:8000"
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"
     environment:
       POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-crypto}
       POSTGRES_USER: ${POSTGRES_USER:-crypto}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 설정하세요}
-    mem_limit: 400m
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_API_KEY_2: ${NVIDIA_API_KEY_2:-}
+      NIM_MODEL: ${NIM_MODEL:-}
+      NIM_FALLBACK_MODEL: ${NIM_FALLBACK_MODEL:-nvidia/nemotron-3.5-lightning-30b-a3b}
+      NIM_RPM: ${NIM_RPM:-40}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      MAX_CONCURRENT_RUNS: ${MAX_CONCURRENT_RUNS:-2}
+    # 분석 1회 피크 ~300MB (10년 일봉 x 30개 변형 + 몬테카를로 2,000경로). 동시 2회 + 여유.
+    mem_limit: ${BACKEND_MEM_LIMIT:-1g}
 
-  # ----------------------------------------------------------
-  # Dashboard — GHCR 이미지(nginx). backend로 /api 프록시. (8501)
-  # ----------------------------------------------------------
   dashboard:
     image: ${IMAGE_PREFIX}-dashboard:${IMAGE_TAG:-latest}
     container_name: dashboard
@@ -197,8 +47,5 @@ services:
     depends_on:
       - backend
     ports:
-      - "8501:80"
-    mem_limit: 200m
-
-volumes:
-  hf-cache:
+      - "127.0.0.1:8501:80"
+    mem_limit: 128m

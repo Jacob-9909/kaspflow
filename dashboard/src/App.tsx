@@ -1,598 +1,257 @@
 /**
- * App: 대시보드 최상위 컴포넌트
- * ============================================================
- * [이 파일이 하는 일]
- *   1. 마운트 시 심볼 목록을 불러오고, 첫 심볼을 자동 선택한다.
- *   2. 선택된 심볼의 1분봉을 5초마다 다시 불러온다(폴링) -> 실시간처럼 갱신.
- *   3. 최신 캔들 + 첫 캔들로 등락(가격/퍼센트)을 계산해 가격 헤더로 강조한다.
- *   4. 요약 지표(고/저/거래량/체결수)를 색상 코딩된 카드로 보여준다.
- *   5. 캔들 데이터를 CandleChart 에 넘겨 차트를 그린다.
- *      봉은 한 배열로 유지한다: 5초 폴링은 최신 구간만 뒤쪽에 덮어쓰고(mergeTail),
- *      차트를 왼쪽 끝까지 스크롤하면 과거 구간을 앞에 이어 붙인다(loadOlder -> prependOlder).
- *   6. 백테스트를 켜면 /backtest 결과(매수/매도 마커, 성과 지표)를 함께 불러와
- *      차트에 마커를 찍고 BacktestPanel 에 결과를 보여준다.
- *   7. 뉴스: /news 의 신호를 봉마다 감정 색 점으로 찍고(누르면 그 봉의 기사 목록), 차트 아래에 news_score 선을 그린다.
- *      뉴스 테이블이 없거나 수집 전이면(백엔드 503) 뉴스 기능만 조용히 숨긴다.
- *
- * [읽는 순서 추천]
- *   App() 안의 useEffect 2개 -> 파생값(latest/first/change) -> return JSX
- *   (헤더+라이브 / 툴바 / 가격헤더 / 지표카드 / 차트)
+ * 앱 셸: 상단 바(검색·기록·테마·로그인), 주소 기반 화면 전환, 종목 화면(시세·차트·실행·결과).
+ *   /             홈
+ *   /?s=NVDA      종목 화면 (실행 전)
+ *   /?run=<id>    저장된 결과 (공유 가능한 주소)
+ *   /?view=history 판단 기록
+ * 라우터 라이브러리 없이 URLSearchParams + history API 로 처리한다.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  fetchSymbols,
-  fetchOhlcPage,
-  fetchIntervals,
-  fetchBacktest,
-  fetchBacktestStrategies,
-  fetchNews,
-  fetchNewsHealth,
-  fetchNewsPipeline,
-  fetchNewsScore,
-  type BacktestConfig,
-  type BacktestResult,
-  type Candle,
-  type NewsHealth,
-  type NewsPipeline,
-  type NewsItem,
-  type NewsScorePoint,
-  type StrategyInfo,
-} from "./api";
-import { mergeTail, prependOlder, stepMs } from "./candles";
-import { BacktestPanel } from "./components/BacktestPanel";
-import { CandleChart, groupNewsByBar } from "./components/CandleChart";
-import { LayaFlow } from "./components/LayaFlow";
-import { NewsList } from "./components/NewsList";
-import { NewsScoreChart } from "./components/NewsScoreChart";
-import { SymbolSelector } from "./components/SymbolSelector";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { analyze, api, type Horizon, type Me, type Quote, type Result } from "./api";
+import { PriceChart, type PriceLevel } from "./components/Charts";
+import { History, Home, RunsTable } from "./components/History";
+import { Analogs, Fundamentals, News, Personas, Strategies, Valuation } from "./components/Sections";
+import { FactorGrid, PlanCard, Reasons, RiskRegime, VerdictHero } from "./components/Report";
+import { Progress, RunPanel, type StepState } from "./components/Run";
+import Search from "./components/Search";
+import { big, date, dateTime, dirClass, pct, usd } from "./format";
 
-// 폴링 주기(ms). 백엔드/DB 갱신 주기(Spark 5초 트리거)와 맞췄다.
-const REFRESH_MS = 5000;
+type Route = { view: "home" | "symbol" | "history"; symbol?: string; run?: string };
 
-// 백테스트를 꺼 둔 평소에 차트가 처음 불러오는 봉 수. 켜면 백테스트의 '기간'과 같은 수를 불러온다.
-const DEFAULT_LIMIT = 120;
+function readRoute(): Route {
+  const p = new URLSearchParams(location.search);
+  if (p.get("view") === "history") return { view: "history" };
+  if (p.get("run")) return { view: "symbol", run: p.get("run")! };
+  if (p.get("s")) return { view: "symbol", symbol: p.get("s")!.toUpperCase() };
+  return { view: "home" };
+}
 
-// 5초 폴링 때 받는 최신 구간 크기. 이미 가진 봉의 뒤쪽을 이 구간으로 덮어쓴다.
-const TAIL_LIMIT = 120;
+function routeUrl(r: Route) {
+  if (r.view === "history") return "/?view=history";
+  if (r.run) return `/?run=${r.run}`;
+  if (r.symbol) return `/?s=${encodeURIComponent(r.symbol)}`;
+  return "/";
+}
 
-// 왼쪽으로 스크롤할 때 한 번에 더 불러오는 과거 봉 수 (백엔드 /ohlc 상한 1000 이내).
-const OLDER_CHUNK = 1000;
-
-// 메모리/렌더 보호용: 이만큼 불러오면 더는 과거를 이어 붙이지 않는다.
-const MAX_LOADED = 20000;
-
-// 뉴스는 천천히 바뀌므로 시세보다 드물게 갱신한다.
-const NEWS_REFRESH_MS = 30000;
-const NEWS_SCORE_REFRESH_MS = 15000;
-
-// 숫자를 보기 좋게(천단위 콤마) 표시
-const fmt = (n: number, digits = 2) =>
-  n.toLocaleString("en-US", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
-
-/** 지금 봉의 news_score 와 news_sentiment 기본 규칙상 상태 (진입 조건 / 청산 조건 / 관망 / 신호 없음) */
-function NewsNowCard({ series, d }: { series: NewsScorePoint[] | null; d: Record<string, number> }) {
-  const last = series?.[series.length - 1];
-  const rule = `진입 ≥ ${d.buy_th} · 청산 ≤ ${d.sell_th} · 신호는 감쇠 가중치 ≥ ${d.min_weight} 일 때만`;
-  if (!last || last.weight < d.min_weight) {
-    return <MetricCard label="뉴스 점수 (지금)" value="신호 없음" title={`최근 신선한 기사가 없음. ${rule}`} />;
+function initialTheme(): string {
+  try {
+    return localStorage.getItem("kf-theme") ?? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  } catch {
+    return "dark";
   }
-  const state = last.score >= d.buy_th ? "진입 조건" : last.score <= d.sell_th ? "청산 조건" : "관망";
-  const tone = last.score >= d.buy_th ? "up" : last.score <= d.sell_th ? "down" : undefined;
-  return (
-    <MetricCard
-      label="뉴스 점수 (지금)"
-      value={`${last.score >= 0 ? "+" : ""}${last.score.toFixed(2)} · ${state}`}
-      tone={tone}
-      title={`기사 ${last.count}건 · 가중치 ${last.weight.toFixed(2)}. ${rule}. 투자 조언이 아니다.`}
-    />
-  );
 }
 
-// "몇 초 전" 형태의 상대 시각
-function ago(ms: number): string {
-  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (s < 2) return "방금";
-  if (s < 60) return `${s}초 전`;
-  const m = Math.floor(s / 60);
-  return `${m}분 ${s % 60}초 전`;
-}
-
-function MetricCard({
-  label,
-  value,
-  tone,
-  title,
-}: {
-  label: string;
-  value: string;
-  tone?: "up" | "down";
-  title?: string;
-}) {
-  const cls = tone ? `metric metric--${tone}` : "metric";
-  return (
-    <div className={cls} title={title}>
-      <span className="metric__label">{label}</span>
-      <span className={`metric__value${tone ? ` ${tone}` : ""}`}>{value}</span>
-    </div>
-  );
-}
+const SECTIONS: [string, string][] = [["sec-summary", "요약"], ["sec-plan", "시뮬레이션"], ["sec-strategies", "전략 검증"],
+  ["sec-valuation", "가치평가"], ["sec-fundamentals", "재무"], ["sec-personas", "투자 대가"], ["sec-news", "뉴스"]];
 
 export default function App() {
-  const [symbols, setSymbols] = useState<string[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [intervals, setIntervals] = useState<string[]>(["1m"]);
-  const [interval, setInterval_] = useState<string>("1m");
-  const [candles, setCandles] = useState<Candle[]>([]);
-  // 과거 이어 붙이기 상태: 저장소의 가장 오래된 버킷, 불러오는 중인지, 더는 없는지
-  const [earliest, setEarliest] = useState<string | null>(null);
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  const [noMoreOlder, setNoMoreOlder] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
-  // 백테스트: 전략 목록(서버 제공), 켜짐 여부, 적용된 설정, 결과
-  const [strategies, setStrategies] = useState<StrategyInfo[]>([]);
-  const [btOn, setBtOn] = useState(false);
-  const [btConfig, setBtConfig] = useState<BacktestConfig | null>(null);
-  const [btResult, setBtResult] = useState<BacktestResult | null>(null);
-  const [btError, setBtError] = useState<string | null>(null);
-  const [btLoading, setBtLoading] = useState(false);
-  // 뉴스: 켜짐 여부, 신호(null = 사용 불가), news_score 선, 수집 상태, 차트에서 누른 봉, 메인 차트의 보이는 시간 구간
-  const [newsOn, setNewsOn] = useState(true);
-  const [news, setNews] = useState<NewsItem[] | null>(null);
-  const [newsScore, setNewsScore] = useState<NewsScorePoint[] | null>(null);
-  const [newsHealth, setNewsHealth] = useState<NewsHealth | null>(null);
-  const [pipeline, setPipeline] = useState<NewsPipeline | null>(null); // Laya 흐름 패널 (null = 사용 불가)
-  const [traced, setTraced] = useState<NewsItem | null>(null); // Laya 흐름에서 따라갈 기사
-  const [pickedBar, setPickedBar] = useState<number | null>(null);
-  const [timeRange, setTimeRange] = useState<{ from: number; to: number } | null>(null);
-  // 상대시각("N초 전")을 1초마다 다시 그리기 위한 틱
-  const [, setTick] = useState(0);
+  const [route, setRoute] = useState<Route>(readRoute);
+  const [theme, setTheme] = useState(initialTheme);
+  const [me, setMe] = useState<Me | null>(null);
 
-  // 1) 마운트 시 1회: 심볼 목록 + 인터벌 목록 로드 + 첫 심볼 자동 선택
   useEffect(() => {
-    fetchSymbols()
-      .then((list) => {
-        setSymbols(list);
-        if (list.length > 0) setSelected((prev) => prev ?? list[0]);
-      })
-      .catch((e) => setError(String(e)));
-    fetchIntervals()
-      .then((list) => {
-        if (list.length > 0) setIntervals(list);
-      })
-      .catch(() => {
-        /* 실패해도 기본 ["1m"] 유지 */
-      });
-    // 백엔드가 백테스트를 지원하면 전략 목록으로 기본 설정을 만든다 (미지원이면 패널을 숨김)
-    fetchBacktestStrategies().then((res) => {
-      if (!res || res.strategies.length === 0) return;
-      const first = res.strategies[0];
-      setStrategies(res.strategies);
-      setBtConfig({
-        strategy: first.id,
-        limit: 500,
-        initialCapital: 10000,
-        feeBps: res.risk_defaults.fee_bps,
-        stopLossPct: null,
-        takeProfitPct: null,
-        trailingStopPct: null,
-        fill: "auto",
-        params: first.params,
-      });
-    });
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("kf-theme", theme); } catch { /* 저장 못 해도 동작에는 문제없다 */ }
+  }, [theme]);
+
+  const refreshMe = useCallback(() => { api.me().then(setMe).catch(() => setMe({ authenticated: false, login_enabled: false, llm: false })); }, []);
+  useEffect(refreshMe, [refreshMe]);
+
+  useEffect(() => {
+    const onPop = () => setRoute(readRoute());
+    addEventListener("popstate", onPop);
+    return () => removeEventListener("popstate", onPop);
   }, []);
 
-  // 차트가 처음 불러올 봉 수. 백테스트를 켜면 마커가 전부 보이도록 백테스트 '기간'과 같게 한다.
-  const initialLimit = btOn && btConfig ? btConfig.limit : DEFAULT_LIMIT;
-  // "다른 차트인가"를 가르는 키. 바뀌면 불러 둔 과거를 버리고 처음부터 다시 시작한다.
-  const viewKey = `${selected}|${interval}|${initialLimit}`;
-  const viewKeyRef = useRef(viewKey);
-  viewKeyRef.current = viewKey;
-
-  // 비동기 콜백(과거 로딩)에서 최신 값을 읽기 위한 ref
-  const candlesRef = useRef<Candle[]>([]);
-  candlesRef.current = candles;
-  const earliestRef = useRef<string | null>(null);
-  earliestRef.current = earliest;
-  const loadingOlderRef = useRef(false);
-  const noMoreOlderRef = useRef(false);
-  noMoreOlderRef.current = noMoreOlder;
-
-  // 2) 캔들 로드: 차트가 바뀌면 초기 로드, 이후 5초마다 최신 구간(tail)만 받아 뒤쪽에 덮어쓴다.
-  //    (이전에는 매번 '최근 N봉 통째 교체'라 과거를 불러와도 5초 뒤 사라졌다)
-  useEffect(() => {
-    if (!selected) return;
-
-    let cancelled = false; // 언마운트/차트 전환 후 setState 방지 플래그
-    const step = stepMs(interval);
-
-    // 새 차트: 이전 차트의 봉과 과거 이어 붙이기 상태를 비운다.
-    setCandles([]);
-    setEarliest(null);
-    setNoMoreOlder(false);
-    setLoadingOlder(false);
-    loadingOlderRef.current = false;
-
-    const loadInitial = () =>
-      fetchOhlcPage(selected, interval, initialLimit)
-        .then((page) => {
-          if (cancelled) return;
-          setCandles(page.candles);
-          setEarliest(page.earliest);
-          setError(null);
-          setUpdatedAt(Date.now());
-        })
-        .catch((e) => {
-          if (!cancelled) setError(String(e));
-        });
-
-    const pollTail = () =>
-      fetchOhlcPage(selected, interval, TAIL_LIMIT)
-        .then((page) => {
-          if (cancelled) return;
-          // 가진 봉과 이어지지 않으면(탭이 오래 멈췄다 돌아온 경우 등) 이 구간으로 새로 시작한다.
-          setCandles((prev) => mergeTail(prev, page.candles, step) ?? page.candles);
-          setError(null);
-          setUpdatedAt(Date.now());
-        })
-        .catch((e) => {
-          if (!cancelled) setError(String(e));
-        });
-
-    loadInitial();
-    // window.setInterval: 위 상태변수 interval 과 이름이 겹쳐 window. 으로 명시
-    const timer = window.setInterval(pollTail, REFRESH_MS);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [selected, interval, initialLimit]);
-
-  // 과거 이어 붙이기: 차트가 왼쪽 끝 근처까지 스크롤되면 호출된다.
-  const loadOlder = useCallback(async () => {
-    if (!selected) return;
-    const cur = candlesRef.current;
-    if (cur.length === 0 || loadingOlderRef.current || noMoreOlderRef.current) return;
-
-    // 가진 가장 오래된 봉이 저장소의 첫 버킷이면 더 없음
-    const oldest = cur[0].window_start;
-    const earliestKnown = earliestRef.current;
-    if (earliestKnown && Date.parse(oldest) <= Date.parse(earliestKnown)) {
-      setNoMoreOlder(true);
-      return;
-    }
-    if (cur.length >= MAX_LOADED) {
-      setNoMoreOlder(true);
-      return;
-    }
-
-    const key = viewKeyRef.current;
-    loadingOlderRef.current = true;
-    setLoadingOlder(true);
-    try {
-      const page = await fetchOhlcPage(selected, interval, OLDER_CHUNK, oldest);
-      if (viewKeyRef.current !== key) return; // 기다리는 사이 심볼/간격이 바뀌었으면 버린다
-      // 가진 첫 봉보다 과거인 봉이 하나도 없으면 더는 진전이 없다(끝에 도달했거나, before 를 모르는 구버전 서버).
-      // 이때 멈추지 않으면 같은 요청을 왼쪽 가장자리마다 무한히 되풀이한다.
-      const oldestMs = Date.parse(oldest);
-      if (!page.candles.some((c) => Date.parse(c.window_start) < oldestMs)) {
-        setNoMoreOlder(true);
-        return;
-      }
-      setCandles((prev) => prependOlder(prev, page.candles));
-      if (page.earliest) setEarliest(page.earliest);
-      if (page.earliest && Date.parse(page.candles[0].window_start) <= Date.parse(page.earliest)) {
-        setNoMoreOlder(true); // 이번에 저장소의 첫 버킷까지 도달
-      }
-    } catch (e) {
-      if (viewKeyRef.current === key) setError(String(e));
-    } finally {
-      if (viewKeyRef.current === key) {
-        loadingOlderRef.current = false;
-        setLoadingOlder(false);
-      }
-    }
-  }, [selected, interval]);
-
-  // 백테스트: 켜져 있으면 5초마다 결과를 다시 계산해 받아 온다. (캔들 로딩과는 독립)
-  useEffect(() => {
-    if (!selected) return;
-
-    let cancelled = false;
-    const bt = btOn ? btConfig : null;
-
-    if (!bt) {
-      setBtResult(null);
-      setBtError(null);
-      return;
-    }
-
-    const run = () =>
-      fetchBacktest(selected, interval, bt)
-        .then((res) => {
-          if (!cancelled) {
-            setBtResult(res);
-            setBtError(null);
-          }
-        })
-        .catch((e) => {
-          if (!cancelled) setBtError(e instanceof Error ? e.message : String(e));
-        })
-        .finally(() => {
-          if (!cancelled) setBtLoading(false);
-        });
-
-    setBtLoading(true);
-    run();
-    const timer = window.setInterval(run, REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [selected, interval, btOn, btConfig]);
-
-  // 뉴스 신호: 30초마다 갱신. 사용할 수 없으면(null) 뉴스 UI 를 숨긴다.
-  useEffect(() => {
-    setPickedBar(null);
-    setNews(null);
-    if (!selected || !newsOn) return;
-    let cancelled = false;
-    const run = () =>
-      fetchNews(selected).then((items) => {
-        if (!cancelled) setNews(items);
-      });
-    run();
-    const timer = window.setInterval(run, NEWS_REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [selected, interval, newsOn]);
-
-  // news_score 선: 차트에 불러온 봉 수만큼 (백엔드 상한 5000). 과거를 더 불러오면 다음 갱신에 따라온다.
-  useEffect(() => {
-    setNewsScore(null);
-    if (!selected || !newsOn) return;
-    let cancelled = false;
-    const run = () =>
-      fetchNewsScore(selected, interval, Math.max(candlesRef.current.length, initialLimit)).then((series) => {
-        if (!cancelled) setNewsScore(series);
-      });
-    run();
-    const timer = window.setInterval(run, NEWS_SCORE_REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [selected, interval, newsOn, initialLimit]);
-
-  // 수집 상태(마지막 수집 시각): 수집이 멈추면 경고로 보여 준다.
-  useEffect(() => {
-    let cancelled = false;
-    const run = () => {
-      fetchNewsHealth().then((h) => {
-        if (!cancelled) setNewsHealth(h);
-      });
-      fetchNewsPipeline().then((p) => {
-        if (!cancelled) setPipeline(p);
-      });
-    };
-    run();
-    const timer = window.setInterval(run, NEWS_REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
+  const go = useCallback((r: Route, replace = false) => {
+    const url = routeUrl(r);
+    if (replace) history.replaceState(null, "", url);
+    else if (url !== location.pathname + location.search) history.pushState(null, "", url);
+    setRoute(r);
+    if (!replace) scrollTo({ top: 0 });
   }, []);
-
-  // 3) 상대시각 라벨을 1초마다 갱신
-  useEffect(() => {
-    const t = window.setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  // 파생값: 최신/첫 캔들과 등락 계산
-  //   등락은 "처음 보이는 구간(initialLimit 봉)" 기준으로 계산한다. 과거를 더 불러와도 헤더 값이 바뀌지 않게 한다.
-  const latest = candles.length > 0 ? candles[candles.length - 1] : null;
-  const shownBars = candles.slice(-initialLimit);
-  const first = shownBars.length > 0 ? shownBars[0] : null;
-  const changeAbs = latest && first ? latest.close - first.open : 0;
-  const changePct = latest && first && first.open !== 0 ? (changeAbs / first.open) * 100 : 0;
-  const up = changeAbs >= 0;
-  const tone: "up" | "down" = up ? "up" : "down";
-
-  // 라이브 상태: 마지막 갱신이 15초 이내면 "실시간"
-  const isLive = updatedAt !== null && Date.now() - updatedAt < 15000;
-
-  // 뉴스: 선택한 봉의 기사 / 없으면 최근 기사
-  const stepMsNow = stepMs(interval);
-  const newsByBar = news && stepMsNow ? groupNewsByBar(news, stepMsNow) : null;
-  const pickedNews = pickedBar !== null && newsByBar ? (newsByBar.get(pickedBar) ?? []) : null;
-  const newsShown = newsOn ? news : null; // null = 사용 불가/꺼짐
-  const newsUsable = newsShown !== null;
-
-  // 다른 심볼/간격의 이전 결과가 잠깐 남아 있어도 마커가 엉뚱한 차트에 찍히지 않게 걸러낸다.
-  const btShown =
-    btOn && btResult && btResult.symbol === selected && btResult.interval === interval ? btResult : null;
 
   return (
-    <div className="app">
-      <header className="header">
-        <div className="brand">
-          <div className="brand__logo">📈</div>
-          <div>
-            <h1 className="brand__title">실시간 암호화폐 시세</h1>
-            <p className="brand__subtitle">
-              Binance → Kafka → Spark → PostgreSQL → FastAPI → React
-            </p>
-          </div>
-        </div>
-        <span className="live">
-          <span className={`live__dot${isLive ? "" : " live__dot--stale"}`} />
-          {isLive ? "실시간" : "연결 대기"}
-          {updatedAt && <span style={{ color: "var(--muted)" }}>· {ago(updatedAt)}</span>}
-          {newsHealth && newsHealth.status !== "empty" && (
-            <span
-              className={newsHealth.status === "stale" ? "news-health news-health--stale" : "news-health"}
-              title={`24시간 기사 ${newsHealth.articles_24h}건 · 신호 ${newsHealth.signals_24h}건`}
-            >
-              · 뉴스 {newsHealth.age_minutes === null ? "-" : `${Math.round(newsHealth.age_minutes)}분 전`}
-              {newsHealth.status === "stale" && " ⚠ 수집 지연"}
-            </span>
-          )}
-        </span>
+    <>
+      <a className="skip" href="#main">본문으로 건너뛰기</a>
+      <header className="topbar">
+        <button className="brand" onClick={() => go({ view: "home" })} aria-label="kaspflow 홈">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-6 4 4 8-10" /><path d="M14 5h6v6" /></svg>
+          <span>kaspflow</span><small>매매 검증기</small>
+        </button>
+        <div className="topsearch"><Search onPick={(s) => go({ view: "symbol", symbol: s })} /></div>
+        <nav className="topnav" aria-label="주 메뉴">
+          <button className={route.view === "history" ? "on" : ""} onClick={() => go({ view: "history" })}>판단 기록</button>
+          <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? "밝은 테마로" : "어두운 테마로"}>
+            {theme === "dark"
+              ? <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+              : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>}
+          </button>
+          {me?.authenticated && <button onClick={() => api.logout().then(refreshMe)}>로그아웃</button>}
+        </nav>
       </header>
+      <main id="main" className="container">
+        {route.view === "home" && <Home onPick={(s) => go({ view: "symbol", symbol: s })} onOpen={(id) => go({ view: "symbol", run: id })} />}
+        {route.view === "history" && <History onOpen={(id) => go({ view: "symbol", run: id })} />}
+        {route.view === "symbol" && (
+          <SymbolPage key={route.run ?? route.symbol} route={route} me={me} theme={theme} onLogin={refreshMe}
+                      onRunSaved={(id) => go({ view: "symbol", run: id }, true)} onOpen={(id) => go({ view: "symbol", run: id })} />
+        )}
+      </main>
+      <footer className="site-footer">
+        <p>공개 데이터(Yahoo Finance, Google News)와 통계 모델로 만든 참고 자료이며 투자 권유가 아닙니다. 과거 성과와 시뮬레이션은 미래 수익을 보장하지 않습니다.</p>
+      </footer>
+    </>
+  );
+}
 
-      <div className="toolbar">
-        <div className="toolbar__group">
-          <span className="toolbar__label">심볼</span>
-          <SymbolSelector symbols={symbols} selected={selected} onSelect={setSelected} />
-        </div>
-        <div className="toolbar__group">
-          <span className="toolbar__label">간격</span>
-          <div className="symbol-selector">
-            {intervals.map((iv) => (
-              <button
-                key={iv}
-                className={iv === interval ? "chip chip--sm chip--active" : "chip chip--sm"}
-                onClick={() => setInterval_(iv)}
-              >
-                {iv}
-              </button>
-            ))}
+function SymbolPage({ route, me, theme, onLogin, onRunSaved, onOpen }: {
+  route: Route; me: Me | null; theme: string; onLogin: () => void; onRunSaved: (id: string) => void; onOpen: (id: string) => void;
+}) {
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [steps, setSteps] = useState<StepState[] | null>(null);
+  const [queued, setQueued] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [horizon, setHorizon] = useState<Horizon>("mid");
+  const [strategy, setStrategy] = useState("");
+  const [past, setPast] = useState<Awaited<ReturnType<typeof api.runs>> | null>(null);
+  const symbol = result?.symbol ?? route.symbol ?? quote?.symbol;
+
+  useEffect(() => {
+    setError(null);
+    if (route.run) {
+      api.run(route.run).then((r) => { setResult(r); setHorizon(r.horizon); }).catch((e) => setError(`기록을 불러오지 못했습니다: ${(e as Error).message}`));
+    } else if (route.symbol) {
+      api.quote(route.symbol).then(setQuote).catch((e) => setError((e as Error).message));
+    }
+  }, [route.run, route.symbol]);
+
+  useEffect(() => {
+    if (symbol) api.runs(symbol).then(setPast).catch(() => setPast(null));
+  }, [symbol, result?.run_id]);
+
+  useEffect(() => {
+    if (!result) return;
+    // 차트 화살표 기본값: 판단에 쓰인(가중치 큰) 비단타 전략. 변동성 돌파는 매일 매매라 화살표가 너무 많다.
+    const ranked = [...result.validation.strategies].sort((a, b) => Number(a.family === "day") - Number(b.family === "day")
+      || b.weight - a.weight || (b.wf?.metrics.sharpe ?? -9) - (a.wf?.metrics.sharpe ?? -9));
+    setStrategy(ranked[0]?.key ?? "");
+  }, [result]);
+
+  const run = (h: Horizon, pos: { qty: number; avg: number } | null) => {
+    if (!symbol) return;
+    setRunning(true);
+    setError(null);
+    setResult(null);
+    setSteps(null);
+    analyze(symbol, h, pos, (ev) => {
+      if (ev.type === "start") {
+        setQueued(ev.queued);
+        setSteps(ev.steps.map(([key, label]) => ({ key, label, status: "wait" })));
+      } else if (ev.type === "step") {
+        setQueued(false);
+        setSteps((s) => s?.map((x) => x.key === ev.step ? { ...x, status: ev.status === "done" ? "done" : "running", detail: ev.detail ?? x.detail, ms: ev.ms } : x) ?? null);
+      } else if (ev.type === "done") {
+        setRunning(false);
+        setResult({ ...ev.data, run_id: ev.run_id ?? undefined });
+        setHorizon(ev.data.horizon);
+        if (ev.run_id) onRunSaved(ev.run_id);
+      } else {
+        setRunning(false);
+        setError(ev.message);
+      }
+    });
+  };
+
+  const sel = result?.validation.strategies.find((s) => s.key === strategy);
+  const levels = useMemo<PriceLevel[]>(() => {
+    if (!result) return [];
+    const p = result.simulation.plans[horizon];
+    return [{ price: p.stop, label: "손절", tone: "down" }, { price: p.target, label: "목표", tone: "up" }];
+  }, [result, horizon]);
+
+  const head = result ? { name: result.name, symbol: result.symbol, price: result.quote.price, change: result.quote.change,
+    exchange: result.quote.exchange, sector: result.quote.sector, industry: result.quote.industry, cap: result.quote.market_cap, asOf: result.quote.as_of }
+    : quote ? { name: quote.name, symbol: quote.symbol, price: quote.price, change: quote.change, exchange: quote.exchange,
+      sector: quote.sector, industry: quote.industry, cap: quote.market_cap, asOf: quote.as_of } : null;
+
+  return (
+    <div className="symbol-page">
+      {error && <div className="banner error" role="alert">{error}</div>}
+      {head ? (
+        <header className="sym-head">
+          <div>
+            <h1>{head.name} <span className="ticker">{head.symbol}</span></h1>
+            <p className="hint">{[head.exchange, head.sector, head.industry].filter(Boolean).join(" · ")} · 시가총액 {big(head.cap)} · 기준일 {head.asOf}</p>
           </div>
-        </div>
-        {news !== null || !newsOn ? (
-          <div className="toolbar__group">
-            <span className="toolbar__label">뉴스</span>
-            <div className="symbol-selector">
-              <button
-                className={newsOn ? "chip chip--sm chip--active" : "chip chip--sm"}
-                onClick={() => setNewsOn((v) => !v)}
-                title="차트에 뉴스 점과 news_score 선을 표시"
-              >
-                {newsOn ? "표시 중" : "숨김"}
-              </button>
+          <div className="price-block">
+            <span className="price num">{usd(head.price)}</span>
+            <span className={`change num ${dirClass(head.change, 0)}`}>{pct(head.change, 2)}</span>
+          </div>
+          {quote && !result && (
+            <div className="range52" aria-label="52주 범위">
+              <span className="num">{usd(quote.low52)}</span>
+              <div className="track"><div className="dot" style={{ left: `${((quote.price - quote.low52) / Math.max(quote.high52 - quote.low52, 1e-9)) * 100}%` }} /></div>
+              <span className="num">{usd(quote.high52)}</span>
+              <small>52주</small>
             </div>
-          </div>
-        ) : null}
+          )}
+        </header>
+      ) : !error && <div className="skeleton head" aria-busy="true" />}
+
+      <div className="layout">
+        <section className="card chart-card" aria-label="가격 차트">
+          <div className="chart-legend"><span className="lg sma50">SMA50</span><span className="lg sma200">SMA200</span>
+            {sel && <span className="lg marks">{sel.label} 매매 (최근 2년)</span>}{result && <span className="lg lv">손절 · 목표 ({horizon === "short" ? "단기" : horizon === "mid" ? "중기" : "장기"})</span>}</div>
+          {result ? <PriceChart candles={result.chart.candles} sma50={result.chart.sma50} sma200={result.chart.sma200} markers={sel?.markers} levels={levels} theme={theme} />
+            : quote ? <PriceChart candles={quote.candles} sma50={quote.sma50} sma200={quote.sma200} theme={theme} /> : <div className="skeleton chart" />}
+          {result?.quote.partial_bar && <p className="hint">장중 데이터: 마지막 봉은 아직 진행 중이라 검증·백테스트에서 뺐습니다.</p>}
+        </section>
+        <aside className="side">
+          {(quote || result) && (
+            <RunPanel authed={!!me?.authenticated} loginEnabled={!!me?.login_enabled} running={running} onRun={run} onLogin={onLogin} />
+          )}
+          {steps && (running || !result) && <Progress steps={steps} queued={queued} />}
+          {result && (
+            <section className="card meta">
+              <h2>이 결과</h2>
+              <p className="hint">{result.created_at ? `${dateTime(result.created_at)} 실행` : "방금 실행"} · {((result.meta.duration_ms ?? 0) / 1000).toFixed(1)}초 · LLM {result.meta.llm_model ?? "-"} ({result.meta.llm_calls ?? 0}회)
+                {result.position && ` · 보유 ${result.position.qty}주 @ ${usd(result.position.avg_price)}`}</p>
+              <button className="btn ghost" onClick={() => navigator.clipboard?.writeText(location.href)}>결과 주소 복사</button>
+            </section>
+          )}
+        </aside>
       </div>
 
-      {error && <p className="error">⚠️ 데이터를 불러오지 못했습니다: {error}</p>}
-
-      {latest ? (
+      {result && (
         <>
-          <div className="price-head">
-            <div>
-              <div className="price-head__symbol">{selected}</div>
-              <div className="price-head__price">{fmt(latest.close)}</div>
-            </div>
-            <div className={`price-head__change ${up ? "pill-up" : "pill-down"}`}>
-              {up ? "▲" : "▼"} {fmt(Math.abs(changeAbs))} ({up ? "+" : "-"}
-              {fmt(Math.abs(changePct))}%)
-            </div>
-            <div className="price-head__spacer" />
-            <div className="price-head__meta">
-              <div>
-                <span className="price-head__meta-label">고가</span>
-                <span className="price-head__meta-value up">{fmt(latest.high)}</span>
-              </div>
-              <div>
-                <span className="price-head__meta-label">저가</span>
-                <span className="price-head__meta-value down">{fmt(latest.low)}</span>
-              </div>
-              <div>
-                <span className="price-head__meta-label">최근 {shownBars.length}봉</span>
-                <span className="price-head__meta-value">{interval}</span>
-              </div>
-            </div>
+          <nav className="subnav" aria-label="결과 섹션">{SECTIONS.map(([id, label]) => <a key={id} href={`#${id}`}>{label}</a>)}</nav>
+          <div id="sec-summary" className="stack">
+            <VerdictHero r={result} horizon={horizon} onHorizon={setHorizon} />
+            <FactorGrid r={result} horizon={horizon} />
+            <Reasons r={result} />
           </div>
-
-          <div className="metrics">
-            <MetricCard label="시가 (open)" value={fmt(latest.open)} />
-            <MetricCard label="종가 (close)" value={fmt(latest.close)} tone={tone} />
-            <MetricCard label="거래량 (volume)" value={fmt(latest.volume, 4)} />
-            <MetricCard label="체결 수 (trades)" value={fmt(latest.trade_count, 0)} />
-            {newsUsable && pipeline && <NewsNowCard series={newsScore} d={pipeline.strategy_defaults} />}
+          <div id="sec-plan" className="stack">
+            <PlanCard r={result} horizon={horizon} />
+            <Analogs r={result} horizon={horizon} />
+            <RiskRegime r={result} />
           </div>
-
-          <div className="chart-card">
-            <CandleChart
-              candles={candles}
-              markers={btShown?.markers}
-              news={newsShown ?? undefined}
-              stepMs={stepMsNow}
-              onBarClick={newsUsable ? setPickedBar : undefined}
-              onVisibleTimeRange={newsUsable ? setTimeRange : undefined}
-              viewKey={viewKey}
-              onNeedOlder={loadOlder}
-            />
-            {newsUsable && newsScore && newsScore.length > 0 && (
-              <>
-                <div className="chart-status chart-status--sub">
-                  <span>news_score (−1 악재 ~ +1 호재 · 봉 마감 시점까지 수집된 기사의 감쇠 가중 평균 · 선이 끊긴 곳은 신호 없음)</span>
-                </div>
-                <NewsScoreChart series={newsScore} range={timeRange} viewKey={viewKey} d={pipeline?.strategy_defaults} />
-              </>
-            )}
-            <div className="chart-status">
-              <span>
-                불러온 {candles.length.toLocaleString()}봉
-                {candles[0] && ` · ${new Date(candles[0].window_start).toLocaleDateString("ko-KR")} ~`}
-              </span>
-              <span>
-                {loadingOlder
-                  ? "과거 불러오는 중…"
-                  : noMoreOlder
-                    ? "저장된 가장 오래된 데이터입니다"
-                    : "← 왼쪽으로 스크롤하면 과거를 더 불러옵니다"}
-              </span>
-            </div>
-          </div>
-
-          {newsShown !== null && (
-            <NewsList
-              items={pickedNews !== null ? pickedNews : newsShown.slice(0, 10)}
-              title={pickedNews !== null ? "선택한 봉의 뉴스" : "최근 뉴스"}
-              hint={
-                pickedNews !== null
-                  ? "차트의 다른 봉을 누르면 바뀝니다"
-                  : "차트의 ● 점(봉)을 누르면 그 봉에 수집된 기사를 보여 줍니다 · 점 색: 호재/중립/악재"
-              }
-              onTrace={pipeline ? setTraced : undefined}
-            />
-          )}
-
-          {newsShown !== null && pipeline && (
-            <LayaFlow p={pipeline} traced={traced} onCloseTrace={() => setTraced(null)} />
-          )}
-
-          {strategies.length > 0 && btConfig && (
-            <BacktestPanel
-              strategies={strategies}
-              interval={interval}
-              enabled={btOn}
-              onToggle={setBtOn}
-              config={btConfig}
-              onApply={setBtConfig}
-              result={btShown}
-              loading={btLoading}
-              error={btError}
-            />
-          )}
+          <Strategies r={result} selected={strategy} onSelect={setStrategy} theme={theme} />
+          <Valuation r={result} />
+          <Fundamentals r={result} />
+          <Personas r={result} />
+          <News r={result} />
+          <p className="disclaimer">{result.meta.disclaimer} 데이터 기준 {date(result.as_of)}.</p>
         </>
-      ) : (
-        !error && (
-          <div className="empty">
-            선택한 심볼의 집계 데이터가 아직 없습니다.
-            <br />
-            producer/spark 가 데이터를 쌓을 때까지 1~2분 기다리면 자동으로 표시됩니다.
-          </div>
-        )
+      )}
+
+      {past && past.runs.length > 0 && (
+        <section className="card">
+          <h2>{symbol} 판단 기록</h2>
+          <RunsTable data={past} onOpen={onOpen} compact />
+        </section>
       )}
     </div>
   );

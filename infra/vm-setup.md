@@ -1,52 +1,46 @@
-# Oracle VM 셋업 런북 (kaspflow 최초 배포)
+# oracle_vm 셋업 런북 (kaspflow 주식 검증기)
 
-> 이 문서는 **처음 1회** VM을 세팅하는 순서다. 위에서 아래로 그대로 따라가면 된다.
-> 실제 VM 상태(2026-09-25 실측): Docker 없음, PostgreSQL 17 설치됨(중지), Neo4j 없음.
-> 배경/결정은 `../docs/deploy-notes.md` 참고.
-
-접속: `ssh oracle_vm`  (User `ubuntu`, 161.33.134.252)
+접속: `ssh oracle_vm` (User `ubuntu`, OCI 도쿄 A1.Flex ARM64 2 OCPU · 12GB, Ubuntu 22.04)
+구성: Docker compose 2개 컨테이너(backend, dashboard) + 호스트 네이티브 PostgreSQL 17(`crypto` DB) + Caddy(TLS).
+접속 주소: https://bit-kaspflow.duckdns.org (Caddy 가 `/api/*` → 127.0.0.1:8010, 나머지 → 127.0.0.1:8501)
 
 ---
 
-## 0. GitHub push (맥에서, 1회)
+## A. 1세대(코인 파이프라인)에서 2세대(주식 검증기)로 전환 (2026-11-16)
 
-VM이 폴링할 원격 저장소가 있어야 한다. 아직 remote가 없다면:
-```bash
-cd ~/Develop/kaspflow
-gh repo create kaspflow --public --source=. --remote=origin --push
-# 또는 이미 만든 repo가 있으면:
-#   git remote add origin https://github.com/<owner>/kaspflow.git
-#   git push -u origin main
-```
-- push 후 GitHub → Settings → Actions → General → **Workflow permissions = Read and write** 확인
-  (GHCR push 권한). 그래야 `publish-images` 가 이미지를 올린다.
-- Actions 탭에서 `Publish Images` 가 성공하고, repo → Packages 에 4개 이미지가 보이는지 확인.
+이미 1세대가 돌던 VM 에서 한 번만 하면 된다. 코드는 `main` push 후 자동배포가 바꾼다.
+
+1. `.env` 에 새 값 추가 (값은 화면에 출력하지 않는다)
+   ```bash
+   cd ~/kaspflow
+   grep -E '^NVIDIA_API_KEY(_2)?=' ~/midas-touch/.env >> .env     # NIM 키 복사
+   nano .env                                                       # APP_PASSWORD=<실행 비밀번호> 추가
+   chmod 600 .env
+   ```
+   1세대 전용 값(KAFKA_TOPIC, SYMBOLS, LAYA_ENABLED, SIGNAL_WORKER_MEM_LIMIT)은 남아 있어도 무시된다.
+2. 자동배포가 새 커밋을 띄운다. 첫 배포는 이미 메모리에 올라간 옛 스크립트로 돌아서 옛 컨테이너가
+   남을 수 있다. 그때는 손으로 한 번 정리한다 (다음 배포부터는 `--remove-orphans` 가 처리):
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d --remove-orphans
+   docker ps --format '{{.Names}}\t{{.Status}}'     # backend, dashboard 두 개만 남아야 한다
+   ```
+3. 확인: `curl -s http://127.0.0.1:8010/health` 가 `"status":"ok"` 와 `"llm":true` 를 돌려주면 끝.
+4. 1세대 테이블(`public.ohlc_1m`, `price_alert`, `news_raw`, `news_signal`, `news_label`, `news_eval`)과
+   `kaspflow_hf-cache` 볼륨(Laya 모델 808MB)은 지우지 않았다. 필요 없으면 직접 정리한다.
 
 ---
 
-## 1. Docker 설치 (VM)
+## B. 새 VM 에 처음부터 (1회)
 
+### 1. Docker
 ```bash
-ssh oracle_vm
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER && newgrp docker
-docker --version && docker compose version
 ```
 
----
-
-## 2. 네이티브 PostgreSQL 17 준비 (VM)
-
+### 2. PostgreSQL 17 (호스트 네이티브)
 ```bash
-# 시작 + 부팅 시 자동 시작
 sudo systemctl enable --now postgresql@17-main
-psql --version && sudo ss -ltnp | grep 5432    # 5432 리슨 확인
-
-# (안전) 기존 데이터 스냅샷 — midas 데이터가 있을 수도 있으니 1회
-sudo -u postgres pg_dumpall > /var/backups/pg_all_$(date +%F).sql 2>/dev/null; \
-  ls -lh /var/backups/pg_all_* 2>/dev/null || echo "빈 DB거나 백업 생략"
-
-# kaspflow 전용 DB/유저 (비밀번호는 강하게)
 sudo -u postgres psql <<'SQL'
 CREATE DATABASE crypto;
 CREATE USER crypto WITH PASSWORD 'CHANGE_ME_STRONG';
@@ -54,125 +48,53 @@ GRANT ALL PRIVILEGES ON DATABASE crypto TO crypto;
 \c crypto
 GRANT ALL ON SCHEMA public TO crypto;
 SQL
-```
-
-### 컨테이너가 호스트 PG에 붙게 허용
-Docker 컨테이너는 기본 브리지(172.16.0.0/12)에서 온다. 두 파일을 고친다.
-```bash
-# 설정 파일 경로 확인
-sudo -u postgres psql -tA -c "SHOW config_file;"    # 보통 /etc/postgresql/17/main/postgresql.conf
 PGCONF=/etc/postgresql/17/main
+sudo sed -i "s/^#\?listen_addresses.*/listen_addresses = '*'/" $PGCONF/postgresql.conf
+echo "host    crypto    crypto    172.16.0.0/12    scram-sha-256" | sudo tee -a $PGCONF/pg_hba.conf
+sudo systemctl reload postgresql@17-main
 ```
-- `postgresql.conf`: `listen_addresses` 를 열어준다.
-  ```bash
-  sudo sed -i "s/^#\?listen_addresses.*/listen_addresses = '*'/" $PGCONF/postgresql.conf
-  ```
-  (외부에는 방화벽으로 5432를 절대 열지 않으므로 `*` 라도 인터넷 노출은 아니다. §4 참고)
-- `pg_hba.conf`: docker 브리지 대역에서 `crypto` DB 접속 허용(맨 아래 추가).
-  ```bash
-  echo "host    crypto    crypto    172.16.0.0/12    scram-sha-256" | sudo tee -a $PGCONF/pg_hba.conf
-  ```
-- 반영:
-  ```bash
-  sudo systemctl reload postgresql@17-main
-  ```
+앱 테이블(`stock.cache`, `stock.analysis_run`)은 backend 가 기동할 때 `schema.sql` 로 스스로 만든다
+(`crypto` 역할이 DB 에 CREATE 권한이 있어야 한다. 위 GRANT ALL PRIVILEGES ON DATABASE 가 그 권한이다).
+**5432 는 외부에 열지 않는다.** 컨테이너는 도커 브리지로만 붙는다.
+
+### 3. 코드 + .env
+```bash
+cd ~ && git clone https://github.com/Jacob-9909/kaspflow.git && cd kaspflow
+cp .env.prod.example .env && nano .env && chmod 600 .env
+```
+GHCR 패키지가 private 이면 `echo <PAT(read:packages)> | docker login ghcr.io -u <github-user> --password-stdin`.
+
+### 4. Caddy (TLS)
+`infra/Caddyfile` 의 사이트 블록을 `/etc/caddy/Caddyfile` 에 붙이고 `sudo systemctl reload caddy`.
+80/443 은 OCI VCN Security List 와 VM iptables **양쪽** 다 열려 있어야 한다 (iptables 는 `-I INPUT 1` 로 앞에 넣기).
+8501·8010 은 compose 가 127.0.0.1 에만 열기 때문에 바깥에서 닿지 않는다.
+
+### 5. 최초 기동 + 자동배포
+```bash
+docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+sudo cp infra/kaspflow-autodeploy.service infra/kaspflow-autodeploy.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now kaspflow-autodeploy.timer
+journalctl -u kaspflow-autodeploy -f
+```
+자동배포 흐름: `main` push → GitHub Actions `publish-images`(테스트 → amd64/arm64 이미지 → GHCR) →
+VM 타이머가 2분마다 `origin/main` 확인 → `build-and-push` 체크가 전부 성공한 커밋만 `git pull` →
+그 커밋의 `:sha-xxxxxxx` 이미지로 `up -d --remove-orphans` → `/health` 가 120초 안에 ok 가 아니면 직전 커밋으로 롤백.
 
 ---
 
-## 3. repo clone + .env + 스키마 (VM)
+## C. 운영 메모 (1세대 런북에서 가져온 교훈)
 
-```bash
-cd ~ && git clone https://github.com/<owner>/kaspflow.git
-cd kaspflow
+- systemd `EnvironmentFile` 과 compose `.env` 는 값 뒤 `# 주석`을 값으로 읽을 수 있다. 주석은 줄 단위로만.
+- compose 파일을 VM 에서 직접 고치지 않는다. 롤백(`git reset --hard`)이 지운다. 바꿀 값은 `.env` 로.
+- 컨테이너에는 `mem_limit` 을 둔다. 호스트가 OOM 이면 커널이 PostgreSQL 을 죽일 수 있다 (backend 1g, dashboard 128m).
+- 헬스체크는 DB 까지 본다. `/health` 는 `stock.analysis_run` 조회가 돼야 `"status":"ok"` 다.
+- backend 는 1 워커다. 분석 동시 실행 수(`MAX_CONCURRENT_RUNS`, 기본 2)와 로그인 시도 제한이 프로세스 메모리에 있다.
 
-# init.sql 을 호스트 PG의 crypto DB에 적용 (컨테이너 PG가 아니므로 수동)
-sudo -u postgres psql -d crypto -f db/init.sql
-sudo -u postgres psql -d crypto -c "\dt"    # ohlc_1m, price_alert 보이면 성공
+## D. 트러블슈팅
 
-# .env 작성 (프로덕션)
-cp .env.prod.example .env
-nano .env
-#   IMAGE_PREFIX=ghcr.io/<owner>/kaspflow   (소문자!)
-#   IMAGE_TAG=latest   (자동배포는 커밋별 sha-xxxxxxx 를 직접 넘긴다. 이 값은 손으로 compose 돌릴 때만 쓰임)
-#   POSTGRES_HOST=host.docker.internal
-#   POSTGRES_PASSWORD=<2번에서 정한 그 비번>
-chmod 600 .env
-```
-
-### GHCR 로그인 (이미지가 private이면)
-```bash
-# GitHub PAT (read:packages 스코프) 를 만들어서:
-echo <GHCR_PAT> | docker login ghcr.io -u <github-user> --password-stdin
-# 또는 repo → Packages 에서 각 이미지를 public 으로 바꾸면 로그인 불필요
-```
-
----
-
-## 4. 방화벽 — 대시보드 포트(8501) 열기
-
-> 오라클은 **두 군데** 다 열어야 한다. 하나만 열면 안 된다. (midas 런북 교훈)
-
-**① OCI 콘솔 (VCN Security List)**
-- Networking → VCN → 해당 Security List → Ingress Rules 추가:
-  - Source `0.0.0.0/0`, Protocol TCP, Dest port **8501** (Kafka UI도 볼 거면 8080)
-
-**② VM 안 iptables** — Oracle Ubuntu는 INPUT 체인 끝에 REJECT가 있어 **`-I INPUT 1`(앞에 삽입)** 해야 한다. `-A`(뒤 추가)는 REJECT에 먼저 걸려 무용지물.
-```bash
-sudo iptables -I INPUT 1 -m state --state NEW -p tcp --dport 8501 -j ACCEPT
-# (선택) Kafka UI 도 외부에서 보려면:
-# sudo iptables -I INPUT 1 -m state --state NEW -p tcp --dport 8080 -j ACCEPT
-# 재부팅 후에도 유지
-sudo apt-get install -y iptables-persistent
-sudo netfilter-persistent save
-```
-> ⚠️ **5432(Postgres)는 절대 외부로 열지 말 것.** 컨테이너는 내부 브리지로만 붙는다.
-
----
-
-## 5. 최초 배포 (VM)
-
-```bash
-cd ~/kaspflow
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
-docker compose -f docker-compose.prod.yml ps
-```
-확인:
-```bash
-curl -s http://127.0.0.1:${BACKEND_HOST_PORT:-8000}/health   # {"status":"ok"} 면 DB까지 OK (.env 의 BACKEND_HOST_PORT, VM 은 8010)
-docker compose -f docker-compose.prod.yml logs -f spark   # [batch N] ... rows upsert
-```
-브라우저: `http://161.33.134.252:8501` (대시보드)
-
----
-
-## 6. 자동배포 켜기 (VM, 선택)
-
-main 에 push → publish-images 성공 → VM이 2분 폴링으로 스스로 pull&배포.
-```bash
-cd ~/kaspflow/infra
-# CI 게이트를 켜려면 service 파일의 GH_REPO 를 채운다 (예: Jacob-9909/kaspflow)
-sudo nano kaspflow-autodeploy.service     #   Environment=GH_REPO=<owner>/kaspflow
-sudo cp kaspflow-autodeploy.service /etc/systemd/system/
-sudo cp kaspflow-autodeploy.timer   /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now kaspflow-autodeploy.timer
-
-# 확인
-systemctl status kaspflow-autodeploy.timer
-journalctl -u kaspflow-autodeploy -f       # 배포 로그
-sudo systemctl start kaspflow-autodeploy.service   # 지금 즉시 1회 실행
-```
-끄기: `sudo systemctl disable --now kaspflow-autodeploy.timer`
-
----
-
-## 7. 트러블슈팅
-
-- **컨테이너가 DB에 못 붙음** (`/health` 503): §2의 `pg_hba.conf`/`listen_addresses`
-  반영(`reload`)과 `.env` 의 `POSTGRES_PASSWORD` 확인. 컨테이너 안에서 테스트:
-  `docker compose -f docker-compose.prod.yml exec backend python -c "import psycopg,os;psycopg.connect(host='host.docker.internal',dbname='crypto',user='crypto',password=os.environ['POSTGRES_PASSWORD']);print('ok')"`
-- **대시보드 접속 안 됨**: §4 방화벽 양쪽(VCN + iptables) 확인. `curl -m5 http://161.33.134.252:8501` 로 외부 도달 테스트.
-- **이미지 pull 실패(unauthorized)**: GHCR private → §3의 `docker login ghcr.io`, 또는 패키지 public 전환.
-- **Spark OOM/느림**: `docker stats` 로 메모리 확인. `docker-compose.prod.yml` 의 spark `mem_limit` 조정.
-- **자동배포가 안 돎**: `journalctl -u kaspflow-autodeploy -n 50`. CI 게이트에 걸렸으면 `publish-images` 성공 여부 확인, 또는 service에서 `GH_REPO` 비우면 게이트 skip.
+- `/health` 503: `pg_hba.conf`/`listen_addresses` 반영, `.env` 의 `POSTGRES_PASSWORD`. 컨테이너 안에서
+  `docker compose -f docker-compose.prod.yml exec backend python -c "import db; print(db.DB().ping())"`.
+- `"llm":false`: `.env` 에 `NVIDIA_API_KEY` 가 없다. 넣고 `docker compose -f docker-compose.prod.yml up -d`.
+- 실행 버튼이 503: `APP_PASSWORD` 가 비어 있다.
+- 분석이 '데이터를 찾지 못했습니다': 야후 일시 차단일 수 있다. 몇 분 뒤 다시. 캐시(`stock.cache`)가 있으면 그걸 쓴다.
+- 자동배포가 멈춤: `journalctl -u kaspflow-autodeploy -n 50`. 테스트 실패면 `build-and-push` 가 skipped 라 배포하지 않는다.

@@ -5,73 +5,44 @@
 [![Backend CI](https://github.com/Jacob-9909/kaspflow/actions/workflows/ci-backend.yml/badge.svg)](https://github.com/Jacob-9909/kaspflow/actions/workflows/ci-backend.yml)
 [![Frontend CI](https://github.com/Jacob-9909/kaspflow/actions/workflows/ci-frontend.yml/badge.svg)](https://github.com/Jacob-9909/kaspflow/actions/workflows/ci-frontend.yml)
 
-A data pipeline that turns the Binance trade stream into 1-minute candles with Kafka and Spark Structured Streaming, and shows them on a live candlestick chart.
+A buy / hold / sell validator for US stocks. Pick a ticker, press one button, and the backend runs technical analysis, statistically validated strategy backtests, Monte Carlo simulation, valuation, news sentiment and six investor-philosophy checklists, then gives a verdict for each horizon (1 month, 3 months, 1 year).
 
-- Demo: https://bit-kaspflow.duckdns.org
+- Demo: https://bit-kaspflow.duckdns.org (viewing results is public; running an analysis needs a password)
 
 ```
-Binance WS ─▶ Producer ─▶ Kafka ─▶ Spark Streaming ─▶ PostgreSQL ─▶ FastAPI ─▶ React
-                                   (1-min OHLC aggregation)
+Yahoo Finance ─┐                                  ┌─ verdict per horizon (deterministic)
+Google News  ──┼─▶ FastAPI pipeline (8 steps) ────┤
+NVIDIA NIM   ──┘     PostgreSQL cache + history   └─ React dashboard (SSE progress, charts)
 ```
 
-## Features
+## What it checks
 
-- **Real-time ingestion and aggregation**: The symbol is the partition key, so order is kept per symbol. Watermarks and checkpoints handle late events and restarts. Results are upserted by `(symbol, minute)`.
-- **Candlestick chart**: Draws 1-minute to 1-day candles with `lightweight-charts`.
-- **Backtesting**: Shows SMA, MACD, RSI, Bollinger Bands, and OBV signals on the chart and calculates returns and trade history.
-- **News signal (optional)**: Collects crypto media RSS feeds, turns them into per-symbol sentiment scores, and feeds them into backtests. [Design doc (Korean)](docs/news-signal-design.md)
+- **Validated strategy signals**: 11 strategies (6 ported from midas-touch, plus Turtle breakout, time-series momentum, 10-month trend filter, RSI(2), volatility breakout), 30 parameter variants. Walk-forward out-of-sample results, a Monte Carlo permutation test for timing skill, and the Deflated Sharpe Ratio. Only strategies that pass vote.
+- **Simulation**: 2,000 block-bootstrap price paths with a CAPM drift, stop/target hit probabilities, position sizing, historical analogs.
+- **Valuation and quality**: FCFF DCF with a WACC × terminal-growth sensitivity grid, reverse DCF, PEG, Graham, EPV, Piotroski F, Altman Z, analyst consensus and estimate revisions.
+- **News and investor panel**: NIM labels recent headlines; Buffett, Graham, Lynch, Munger, Wood and Druckenmiller checklists plus LLM opinions.
+- **Track record**: every run is stored and scored after its horizon ends.
 
-> Backtest results do not include slippage and are not investment advice.
+The verdict is computed by code and is reproducible. The LLM explains it but cannot change it. Details: [docs/methodology.md](docs/methodology.md) (Korean).
 
-## Tech Stack
+> Not investment advice. Backtests and simulations do not guarantee future returns.
 
-- Streaming: Apache Kafka, Spark 3.5 Structured Streaming
-- Backend: Python, FastAPI, PostgreSQL
-- Frontend: React, Vite, TypeScript, lightweight-charts
-- Infra: Docker Compose, GitHub Actions, GHCR, Oracle Cloud VM, Caddy
+## Tech stack
 
-## Getting Started
+- Backend: Python 3.12, FastAPI, pandas/numpy, yfinance, psycopg 3, PostgreSQL 17
+- LLM: NVIDIA NIM (OpenAI-compatible, structured JSON output)
+- Frontend: React, Vite, TypeScript, TradingView lightweight-charts, Pretendard
+- Infra: Docker Compose, GitHub Actions, GHCR (amd64 + arm64), Oracle Cloud ARM VM, Caddy
 
-Requires Docker and Docker Compose.
+## Getting started
 
 ```bash
-cp .env.example .env
-docker compose up --build
+cp .env.example .env          # add NVIDIA_API_KEY (optional) and APP_PASSWORD
+docker compose up --build     # http://localhost:8501
 ```
 
-After 1–2 minutes, open the services below. The first Spark run takes longer because it downloads connectors.
+Tests: `cd backend && python -m unittest discover -s tests` (set `TEST_DATABASE_URL` to also run the PostgreSQL tests).
 
-| Service | URL |
-|---|---|
-| Dashboard | http://localhost:8501 |
-| API docs | http://localhost:8000/docs |
-| Kafka UI | http://localhost:8080 |
+## Docs
 
-Change the collected symbols with `SYMBOLS` in `.env`. Stop with `docker compose down`, or `docker compose down -v` to also reset the database.
-
-## Project Structure
-
-```
-producer/         Binance WebSocket → Kafka
-spark/            Kafka → 1-min aggregation → PostgreSQL
-db/               Table schema
-backend/          REST API, backtest engine
-dashboard/        React dashboard
-news-collector/   RSS → Kafka
-signal-worker/    News symbol matching and sentiment classification
-infra/            Caddy, deploy scripts
-```
-
-New to the code? Read `docker-compose.yml` → `producer/main.py` → `spark/jobs/ohlc_stream.py` in that order.
-
-## Tests
-
-```bash
-cd backend && python -m unittest discover -s tests
-```
-
-## Docs (Korean)
-
-- [Design and decisions](docs/design.md)
-- [Architecture](docs/architecture.md)
-- [VM deployment](infra/vm-setup.md)
+- [Architecture](docs/architecture.md) · [Methodology](docs/methodology.md) · [VM runbook](infra/vm-setup.md) (Korean)
