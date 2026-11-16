@@ -25,7 +25,7 @@ log = logging.getLogger("kaspflow.llm")
 T = TypeVar("T", bound=BaseModel)
 NIM_BASE_URL = os.environ.get("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
 DEFAULT_MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
-FALLBACK_MODEL = "z-ai/glm-5.3-flash"
+FALLBACK_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
 RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 CACHE_TTL = 12 * 3600
 _THINK = re.compile(r"<think>.*?</think>", re.S)

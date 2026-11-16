@@ -33,7 +33,7 @@ services:
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       NVIDIA_API_KEY_2: ${NVIDIA_API_KEY_2:-}
       NIM_MODEL: ${NIM_MODEL:-}
-      NIM_FALLBACK_MODEL: ${NIM_FALLBACK_MODEL:-z-ai/glm-5.3-flash}
+      NIM_FALLBACK_MODEL: ${NIM_FALLBACK_MODEL:-nvidia/nemotron-3.5-lightning-30b-a3b}
       NIM_RPM: ${NIM_RPM:-40}
       APP_PASSWORD: ${APP_PASSWORD:-}
       MAX_CONCURRENT_RUNS: ${MAX_CONCURRENT_RUNS:-2}
