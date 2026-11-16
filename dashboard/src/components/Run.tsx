@@ -37,18 +37,41 @@ export function LoginForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-export function RunPanel({ authed, loginEnabled, running, onRun, onLogin }: {
-  authed: boolean; loginEnabled: boolean; running: boolean;
+interface Saved { horizon: Horizon; qty: string; avg: string }
+
+/** 종목별 마지막 실행 설정 (기간·보유 정보). 브라우저에만 저장한다. */
+function loadSaved(symbol: string): Saved {
+  try {
+    const raw = localStorage.getItem(`kf-run:${symbol}`);
+    if (raw) return JSON.parse(raw) as Saved;
+    const h = localStorage.getItem("kf-horizon") as Horizon | null;
+    return { horizon: h ?? "mid", qty: "", avg: "" };
+  } catch {
+    return { horizon: "mid", qty: "", avg: "" };
+  }
+}
+
+function save(symbol: string, v: Saved) {
+  try {
+    localStorage.setItem(`kf-run:${symbol}`, JSON.stringify(v));
+    localStorage.setItem("kf-horizon", v.horizon);
+  } catch { /* 저장 못 해도 실행에는 문제없다 */ }
+}
+
+export function RunPanel({ symbol, authed, loginEnabled, running, onRun, onLogin, horizonHint }: {
+  symbol: string; authed: boolean; loginEnabled: boolean; running: boolean;
   onRun: (h: Horizon, pos: { qty: number; avg: number } | null) => void; onLogin: () => void;
+  horizonHint?: Horizon;  // 저장된 결과를 보고 있으면 그 결과의 기간으로 시작한다
 }) {
-  const [horizon, setHorizon] = useState<Horizon>("mid");
-  const [qty, setQty] = useState("");
-  const [avg, setAvg] = useState("");
+  const [init] = useState(() => ({ ...loadSaved(symbol), ...(horizonHint ? { horizon: horizonHint } : {}) }));
+  const [horizon, setHorizon] = useState<Horizon>(init.horizon);
+  const [qty, setQty] = useState(init.qty);
+  const [avg, setAvg] = useState(init.avg);
   const q = Number(qty), a = Number(avg);
   const pos = qty && avg && q > 0 && a > 0 ? { qty: q, avg: a } : null;
   const posInvalid = (qty || avg) && !pos;
   return (
-    <section className="card run-panel" aria-labelledby="run-title">
+    <section className="card run-panel" id="run-panel" aria-labelledby="run-title">
       <h2 id="run-title">검증 · 시뮬레이션</h2>
       <fieldset className="segmented">
         <legend>판단 기간</legend>
@@ -63,10 +86,12 @@ export function RunPanel({ authed, loginEnabled, running, onRun, onLogin }: {
         <legend>보유 중이면 입력 (선택)</legend>
         <label>수량<input inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" /></label>
         <label>평균 단가($)<input inputMode="decimal" value={avg} onChange={(e) => setAvg(e.target.value)} placeholder="0.00" /></label>
+        {(qty || avg) && <button type="button" className="link" onClick={() => { setQty(""); setAvg(""); }}>지우기</button>}
       </fieldset>
       {posInvalid && <p className="field-error" role="alert">수량과 평균 단가를 둘 다 0보다 크게 입력하세요.</p>}
       {authed ? (
-        <button className="btn primary run-btn" disabled={running || !!posInvalid} onClick={() => onRun(horizon, pos)}>
+        <button className="btn primary run-btn" id="run-btn" disabled={running || !!posInvalid}
+                onClick={() => { save(symbol, { horizon, qty, avg }); onRun(horizon, pos); }}>
           {running ? <><span className="spinner" aria-hidden="true" /> 실행 중</> : "검증 · 시뮬레이션 실행"}
         </button>
       ) : loginEnabled ? <LoginForm onDone={onLogin} /> : <p className="hint">서버에 APP_PASSWORD 가 설정되지 않아 실행할 수 없습니다.</p>}

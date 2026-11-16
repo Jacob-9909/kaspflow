@@ -17,6 +17,8 @@ flowchart LR
 ```
 
 컨테이너는 backend, dashboard 2개다 (1세대는 6개). Kafka·Spark·Laya 모델을 내려 VM 메모리가 약 5GB 비었다.
+컨테이너 런타임은 2026-11-16 부터 Docker Engine 대신 [kiri](https://github.com/libracoder/kiri) 다 (docker CLI·compose 는 그대로,
+VM 설정은 [../infra/vm-setup.md](../infra/vm-setup.md) §K). 로컬 맥도 Docker Desktop 대신 kiri 를 쓴다.
 
 ## 한 번의 실행 (`GET /api/analyze/{symbol}`, SSE)
 

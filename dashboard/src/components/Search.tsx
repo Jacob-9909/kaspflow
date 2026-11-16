@@ -1,6 +1,23 @@
-/** 종목 검색 (자동완성). 입력이 멈추고 250ms 뒤 조회한다. 방향키·엔터로 고를 수 있다. */
+/** 종목 검색 (자동완성). 입력이 멈추고 250ms 뒤 조회한다. 방향키·엔터로 고르고, 비어 있으면 최근 종목을 보여 준다. */
 import { useEffect, useId, useRef, useState } from "react";
 import { api, type SearchHit } from "../api";
+
+const RECENT_KEY = "kf-recent";
+
+export function recentSymbols(): SearchHit[] {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]") as SearchHit[];
+  } catch {
+    return [];
+  }
+}
+
+export function rememberSymbol(hit: SearchHit) {
+  try {
+    const list = [hit, ...recentSymbols().filter((x) => x.symbol !== hit.symbol)].slice(0, 8);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+  } catch { /* 저장 못 해도 검색은 된다 */ }
+}
 
 export default function Search({ onPick, big = false, autoFocus = false }: { onPick: (symbol: string) => void; big?: boolean; autoFocus?: boolean }) {
   const [q, setQ] = useState("");
@@ -10,6 +27,8 @@ export default function Search({ onPick, big = false, autoFocus = false }: { onP
   const [busy, setBusy] = useState(false);
   const listId = useId();
   const box = useRef<HTMLDivElement>(null);
+  const showingRecent = !q.trim();
+  const items = showingRecent ? recentSymbols() : hits;
 
   useEffect(() => {
     const term = q.trim();
@@ -35,16 +54,21 @@ export default function Search({ onPick, big = false, autoFocus = false }: { onP
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
-  const pick = (sym: string) => { setOpen(false); setQ(""); onPick(sym.toUpperCase()); };
+  const pick = (hit: SearchHit) => {
+    setOpen(false);
+    setQ("");
+    rememberSymbol(hit);
+    onPick(hit.symbol.toUpperCase());
+  };
 
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(a + 1, hits.length - 1)); setOpen(true); }
+    if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setActive((a) => Math.min(a + 1, items.length - 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
     else if (e.key === "Escape") setOpen(false);
     else if (e.key === "Enter") {
       e.preventDefault();
-      if (open && hits[active]) pick(hits[active].symbol);
-      else if (/^[A-Za-z0-9.\-^=]{1,15}$/.test(q.trim())) pick(q.trim());
+      if (open && items[active]) pick(items[active]);
+      else if (/^[A-Za-z0-9.\-^=]{1,15}$/.test(q.trim())) pick({ symbol: q.trim().toUpperCase(), name: q.trim().toUpperCase(), type: "", exchange: "" });
     }
   };
 
@@ -52,17 +76,19 @@ export default function Search({ onPick, big = false, autoFocus = false }: { onP
     <div className={`search${big ? " big" : ""}`} ref={box}>
       <svg className="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
       <input
-        value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} onFocus={() => hits.length && setOpen(true)}
+        value={q} onChange={(e) => { setQ(e.target.value); setActive(0); }} onKeyDown={onKey}
+        onFocus={() => { setActive(0); setOpen(true); }}
         placeholder="종목명 또는 티커 (예: NVDA, Apple, SPY)" aria-label="종목 검색" autoFocus={autoFocus}
-        role="combobox" aria-expanded={open && hits.length > 0} aria-controls={listId} aria-autocomplete="list"
-        aria-activedescendant={open && hits[active] ? `${listId}-${active}` : undefined} autoComplete="off" spellCheck={false}
+        role="combobox" aria-expanded={open && items.length > 0} aria-controls={listId} aria-autocomplete="list"
+        aria-activedescendant={open && items[active] ? `${listId}-${active}` : undefined} autoComplete="off" spellCheck={false}
       />
       {busy && <span className="spinner small" aria-label="검색 중" />}
-      {open && hits.length > 0 && (
-        <ul className="search-list" id={listId} role="listbox">
-          {hits.map((h, i) => (
+      {open && items.length > 0 && (
+        <ul className="search-list" id={listId} role="listbox" aria-label={showingRecent ? "최근 본 종목" : "검색 결과"}>
+          {showingRecent && <li className="list-head" role="presentation">최근 본 종목</li>}
+          {items.map((h, i) => (
             <li key={h.symbol} id={`${listId}-${i}`} role="option" aria-selected={i === active}
-                className={i === active ? "active" : ""} onMouseEnter={() => setActive(i)} onMouseDown={(e) => { e.preventDefault(); pick(h.symbol); }}>
+                className={i === active ? "active" : ""} onMouseEnter={() => setActive(i)} onMouseDown={(e) => { e.preventDefault(); pick(h); }}>
               <span className="sym">{h.symbol}</span>
               <span className="nm">{h.name}</span>
               <span className="ex">{h.type === "ETF" ? "ETF" : h.type === "CRYPTOCURRENCY" ? "코인" : h.exchange}</span>

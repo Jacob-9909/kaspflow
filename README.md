@@ -32,7 +32,7 @@ The verdict is computed by code and is reproducible. The LLM explains it but can
 - Backend: Python 3.12, FastAPI, pandas/numpy, yfinance, psycopg 3, PostgreSQL 17
 - LLM: NVIDIA NIM (OpenAI-compatible, structured JSON output)
 - Frontend: React, Vite, TypeScript, TradingView lightweight-charts, Pretendard
-- Infra: Docker Compose, GitHub Actions, GHCR (amd64 + arm64), Oracle Cloud ARM VM, Caddy
+- Infra: Docker Compose on the [kiri](https://github.com/libracoder/kiri) runtime (Mac and the VM), GitHub Actions, GHCR (amd64 + arm64), Oracle Cloud ARM VM, Caddy
 
 ## Getting started
 

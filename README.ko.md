@@ -32,7 +32,7 @@ NVIDIA NIM   ──┘     PostgreSQL 캐시 + 실행 기록    └─ React 대
 - 백엔드: Python 3.12, FastAPI, pandas/numpy, yfinance, psycopg 3, PostgreSQL 17
 - LLM: NVIDIA NIM (OpenAI 호환, JSON 구조화 출력)
 - 프론트엔드: React, Vite, TypeScript, TradingView lightweight-charts, Pretendard
-- 인프라: Docker Compose, GitHub Actions, GHCR (amd64 + arm64), Oracle Cloud ARM VM, Caddy
+- 인프라: Docker Compose ([kiri](https://github.com/libracoder/kiri) 런타임, 맥과 VM 모두), GitHub Actions, GHCR (amd64 + arm64), Oracle Cloud ARM VM, Caddy
 
 ## 실행
 

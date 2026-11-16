@@ -1,7 +1,8 @@
 # oracle_vm 셋업 런북 (kaspflow 주식 검증기)
 
 접속: `ssh oracle_vm` (User `ubuntu`, OCI 도쿄 A1.Flex ARM64 2 OCPU · 12GB, Ubuntu 22.04)
-구성: Docker compose 2개 컨테이너(backend, dashboard) + 호스트 네이티브 PostgreSQL 17(`crypto` DB) + Caddy(TLS).
+구성: compose 2개 컨테이너(backend, dashboard) + 호스트 네이티브 PostgreSQL 17(`crypto` DB) + Caddy(TLS).
+컨테이너 런타임: **kiri** (2026-11-16 Docker Engine 에서 전환, 아래 §K). docker CLI·compose 명령은 그대로 쓴다.
 접속 주소: https://bit-kaspflow.duckdns.org (Caddy 가 `/api/*` → 127.0.0.1:8010, 나머지 → 127.0.0.1:8501)
 
 ---
@@ -30,13 +31,47 @@
 
 ---
 
+## K. 컨테이너 런타임 kiri (2026-11-16 전환)
+
+[kiri](https://github.com/libracoder/kiri) 는 Docker Engine API 를 그대로 말하는 Rust 런타임이다. Linux 에서는 VM 없이
+호스트 커널에서 돈다. VM 에는 엔진만 있는 `kiri-lite` 를 깔고, docker CLI·compose 플러그인은 Docker 패키지 것을 계속 쓴다.
+
+```bash
+# 설치 (arm64, 해시 확인 후)
+curl -fsSLO https://github.com/libracoder/kiri/releases/download/v0.2.1/kiri-lite_0.2.1_arm64.deb
+echo "76fe00facf4d61aefe90fbb0e44774942b1507e810c4e7b47ea34fddafe0193d  kiri-lite_0.2.1_arm64.deb" | sha256sum -c -
+sudo dpkg -i kiri-lite_0.2.1_arm64.deb && sudo usermod -aG kiri ubuntu
+# Docker Engine 은 지우지 않고 끄기만 한다 (롤백용, 이미지도 /var/lib/docker 에 남는다)
+sudo systemctl disable --now docker.service docker.socket containerd.service
+sudo rm -f /run/docker.sock        # dockerd 가 남긴 소켓 파일이 있으면 kiri 가 링크를 만들지 못한다
+sudo systemctl enable --now kiri   # /run/docker.sock -> /run/kiri/docker.sock 링크를 만든다
+```
+
+`/etc/systemd/system/kiri.service.d/` 의 드롭인 두 개가 필요하다 (VM 에만 있음):
+- `ports.conf`: `KIRI_HTTP_PORT=18080`, `KIRI_HTTPS_PORT=18443`. kiri 의 컨테이너 도메인 라우터(127.0.0.1 전용)가 기본으로
+  80/443 을 잡으려 해서, 부팅 순서에 따라 Caddy 와 부딪힐 수 있다.
+- `forward.conf`: kiri 가 뜰 때 `iptables -I FORWARD -i kiri1 -j ACCEPT` 와 `-o kiri1 RELATED,ESTABLISHED ACCEPT` 를 넣고 멈출 때 뺀다.
+  Oracle 이미지의 FORWARD 체인 끝 REJECT 가 컨테이너의 바깥 연결(야후·NIM)을 막기 때문이다. kiri 는 자기 nftables 테이블
+  (`ip kiri`)로 NAT·필터를 하지만 같은 훅의 iptables 체인도 통과해야 한다. `/etc/iptables/rules.v4` 는 건드리지 않는다.
+
+kiri 브리지는 `172.19.0.0/16`(kiri1) 이라 기존 `pg_hba.conf` 의 `172.16.0.0/12` 허용 범위 안이다.
+`restart: unless-stopped` 컨테이너는 kiri 가 재시작되면 다시 뜬다 (확인함). 자동배포(User=ubuntu, kiri 그룹)는 그대로 동작한다.
+
+롤백 (Docker Engine 으로):
+```bash
+cd ~/kaspflow && docker compose -f docker-compose.prod.yml down
+sudo systemctl disable --now kiri
+sudo systemctl enable --now containerd.service docker.socket docker.service
+IMAGE_TAG=sha-$(git rev-parse --short=7 HEAD) docker compose -f docker-compose.prod.yml up -d
+```
+
+---
+
 ## B. 새 VM 에 처음부터 (1회)
 
-### 1. Docker
-```bash
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER && newgrp docker
-```
+### 1. 컨테이너 런타임
+docker CLI·compose 플러그인(Docker apt 저장소의 `docker-ce-cli`, `docker-compose-plugin`)과 kiri 엔진(§K)을 설치한다.
+Docker Engine 을 쓰려면 `curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER`.
 
 ### 2. PostgreSQL 17 (호스트 네이티브)
 ```bash

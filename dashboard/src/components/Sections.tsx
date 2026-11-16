@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import type { Horizon, Result, StrategyResult } from "../api";
 import { HORIZON_LABEL, date, dirClass, num, pct, signed, usd } from "../format";
 import { EquityChart, FootballField, Histogram } from "./Charts";
+import { Term } from "./Glossary";
 
 const FAMILY: Record<string, string> = { trend: "추세", reversion: "역추세", day: "단타" };
 
@@ -26,7 +27,7 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
       <div className="table-wrap">
         <table className="table">
           <thead>
-            <tr><th>전략</th><th>등급</th><th>OOS 샤프</th><th>OOS 연수익</th><th>최대 낙폭</th><th>거래</th><th>승률</th><th>p값</th><th>DSR</th><th>지금 신호</th></tr>
+            <tr><th>전략</th><th>등급</th><th><Term k="OOS" /> <Term k="샤프" /></th><th>OOS 연수익</th><th><Term k="MDD">최대 낙폭</Term></th><th>거래</th><th>승률</th><th><Term k="p값" /></th><th><Term k="DSR" /></th><th>지금 신호</th></tr>
           </thead>
           <tbody>
             {rows.map((s) => {
@@ -96,9 +97,9 @@ export function Valuation({ r }: { r: Result }) {
             <h3>DCF (FCFF, 2단계 + 영구성장)</h3>
             <dl className="kv">
               <div><dt>주당 내재가치</dt><dd className={`num ${d.per_share >= r.quote.price ? "up" : "down"}`}>{usd(d.per_share)}</dd></div>
-              <div><dt>WACC</dt><dd className="num">{pct(d.wacc, 1, false)} <small>자기자본비용 {pct(d.cost_of_equity, 1, false)} · 조정 베타 {num(d.beta, 2)}</small></dd></div>
+              <div><dt><Term k="WACC" /></dt><dd className="num">{pct(d.wacc, 1, false)} <small>자기자본비용 {pct(d.cost_of_equity, 1, false)} · 조정 베타 {num(d.beta, 2)}</small></dd></div>
               <div><dt>1~5년 성장률</dt><dd className="num">{pct(d.growth)} <small>6~10년 영구성장률 {pct(d.terminal_growth, 1, false)} 로 수렴</small></dd></div>
-              <div><dt>현재가가 가정하는 성장률 (역DCF)</dt><dd className={`num ${d.implied_growth > d.growth ? "down" : "up"}`}>{pct(d.implied_growth)}</dd></div>
+              <div><dt>현재가가 가정하는 성장률 (<Term k="역DCF" />)</dt><dd className={`num ${d.implied_growth > d.growth ? "down" : "up"}`}>{pct(d.implied_growth)}</dd></div>
               <div><dt>터미널 가치 비중</dt><dd className="num">{pct(d.tv_share, 0, false)}</dd></div>
             </dl>
             <p className="hint">성장률 근거: {d.growth_sources.join(", ") || "-"} (중앙값, -5%~30% 제한). 주식보상(SBC)은 비용으로 뺐습니다.</p>
@@ -142,10 +143,10 @@ export function Fundamentals({ r }: { r: Result }) {
               <li key={k}><span>{k}</span><span className={`num ${dirClass(x)}`}>{signed(x * 100, 0)}</span></li>
             ))}
           </ul>
-          {q.altman_z !== null && <p className="hint">알트만 Z {num(q.altman_z, 2)} ({q.altman_z > 2.99 ? "안전" : q.altman_z > 1.81 ? "회색 지대" : "부실 위험"})</p>}
+          {q.altman_z !== null && <p className="hint"><Term k="알트만Z">알트만 Z</Term> {num(q.altman_z, 2)} ({q.altman_z > 2.99 ? "안전" : q.altman_z > 1.81 ? "회색 지대" : "부실 위험"})</p>}
           {q.piotroski && (
             <>
-              <h3>피오트로스키 F-점수 {q.piotroski.score}/{q.piotroski.max}</h3>
+              <h3><Term k="피오트로스키">피오트로스키 F-점수</Term> {q.piotroski.score}/{q.piotroski.max}</h3>
               <ul className="checks">
                 {q.piotroski.checks.map((x) => <li key={x.name} className={x.pass === null ? "na" : x.pass ? "pass" : "fail"}>{x.name}</li>)}
               </ul>
