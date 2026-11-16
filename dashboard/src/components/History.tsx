@@ -54,7 +54,7 @@ function Stats({ data }: { data: RunsResponse }) {
       <div><span className="k">전체 적중률</span><b className="num">{s.hit_rate === null ? "-" : pct(s.hit_rate, 0, false)}</b></div>
       {(["buy", "hold", "sell"] as Verdict[]).map((v) => s.by_verdict[v] && (
         <div key={v}><span className="k">{VERDICT_LABEL[v]} 판단</span><b className="num">{pct(s.by_verdict[v]!.hit_rate, 0, false)}</b>
-          <small className={dirClass(s.by_verdict[v]!.avg_return, 0.001)}>평균 {pct(s.by_verdict[v]!.avg_return)} · {s.by_verdict[v]!.n}건</small></div>
+          <small className={dirClass(s.by_verdict[v]!.avg_return, 0.001)}>평균 {pct(s.by_verdict[v]!.avg_return)}, {s.by_verdict[v]!.n}건</small></div>
       ))}
     </div>
   );
@@ -76,7 +76,7 @@ export function Home({ onPick, onOpen }: { onPick: (s: string) => void; onOpen: 
       </section>
       <section className="card">
         <h2>최근 판단 <span className="sub">판단 뒤 기간이 지나면 midas-touch 판단 원장과 같은 기준으로 적중을 매깁니다 (매수 +2% 초과, 매도 -2% 미만, 관망 ±5% 이내)</span></h2>
-        {data ? <><Stats data={data} /><RunsTable data={{ ...data, runs: data.runs.slice(0, 10) }} onOpen={onOpen} compact /></> : <p className="hint">불러오는 중</p>}
+        {data ? <><Stats data={data} /><RunsTable data={{ ...data, runs: data.runs.slice(0, 10) }} onOpen={onOpen} compact /></> : <p className="hint">불러오는 중…</p>}
       </section>
     </div>
   );
@@ -88,9 +88,9 @@ export function History({ onOpen }: { onOpen: (id: string) => void }) {
   useEffect(() => { api.runs().then(setData).catch((e) => setErr((e as Error).message)); }, []);
   return (
     <section className="card">
-      <h2>판단 기록 · 적중률</h2>
+      <h2>판단 기록과 적중률</h2>
       {err && <p className="field-error" role="alert">기록을 불러오지 못했습니다: {err}</p>}
-      {data ? <><Stats data={data} /><RunsTable data={data} onOpen={onOpen} /></> : !err && <p className="hint">불러오는 중</p>}
+      {data ? <><Stats data={data} /><RunsTable data={data} onOpen={onOpen} /></> : !err && <p className="hint">불러오는 중…</p>}
     </section>
   );
 }

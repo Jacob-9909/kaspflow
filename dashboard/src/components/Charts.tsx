@@ -182,7 +182,7 @@ export function FootballField({ rows, price }: { rows: FieldRow[]; price: number
           <div className="ff-val num" role="cell">{r.low === r.high ? usd(r.mid) : `${usd(r.low)} ~ ${usd(r.high)}`}</div>
         </div>
       ))}
-      <div className="ff-legend">세로선 = 현재가 {usd(price)} · 막대 안 점 = 기준값 · 빨강 = 현재가보다 높음(저평가 쪽) · 파랑 = 낮음(고평가 쪽)</div>
+      <div className="ff-legend">세로선은 현재가 {usd(price)}, 막대 안 점은 기준값입니다. 빨강은 현재가보다 높음(저평가 쪽), 파랑은 낮음(고평가 쪽).</div>
     </div>
   );
 }

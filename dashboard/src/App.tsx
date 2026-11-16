@@ -17,6 +17,7 @@ import { Progress, RunPanel, type StepState } from "./components/Run";
 import Search, { rememberSymbol } from "./components/Search";
 import { Analogs, Fundamentals, News, Personas, Strategies, Valuation } from "./components/Sections";
 import { TabBar, type TabDef } from "./components/Tabs";
+import { MetaList } from "./components/ui";
 import { big, date, dateTime, dirClass, pct, usd } from "./format";
 
 type View = "home" | "symbol" | "history" | "method";
@@ -58,8 +59,14 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem("kf-theme", theme); } catch { /* 저장 못 해도 동작에는 문제없다 */ }
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", getComputedStyle(document.documentElement).getPropertyValue("--bg").trim());
   }, [theme]);
+  // 직접 고른 테마만 저장한다. 처음부터 저장하면 OS 설정을 바꿔도 따라가지 않는다.
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    try { localStorage.setItem("kf-theme", next); } catch { /* 저장 못 해도 동작에는 문제없다 */ }
+  };
 
   const refreshMe = useCallback(() => { api.me().then(setMe).catch(() => setMe({ authenticated: false, login_enabled: false, llm: false })); }, []);
   useEffect(refreshMe, [refreshMe]);
@@ -95,7 +102,7 @@ export default function App() {
           {nav("home", "분석")}
           {nav("history", "판단 기록")}
           {nav("method", "검증 방법")}
-          <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? "밝은 테마로" : "어두운 테마로"} className="icon">
+          <button onClick={toggleTheme} aria-label={theme === "dark" ? "밝은 테마로" : "어두운 테마로"} className="icon">
             {theme === "dark"
               ? <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
               : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>}
@@ -250,7 +257,7 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
         <header className="sym-head">
           <div className="sym-title">
             <h1>{head.name} <span className="ticker">{head.symbol}</span></h1>
-            <p className="hint">{[head.exchange, head.sector, head.industry].filter(Boolean).join(" · ")} · 시가총액 {big(head.cap)} · 기준일 {head.asOf}</p>
+            <p className="sym-meta"><MetaList items={[head.exchange, head.sector, head.industry, `시가총액 ${big(head.cap)}`, `기준일 ${head.asOf}`]} /></p>
           </div>
           <div className="price-block">
             <span className="price num">{usd(head.price)}</span>
@@ -271,9 +278,9 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
             </div>
           )}
           <div className="head-actions">
-            <button className="btn primary" onClick={focusRun} disabled={running}>{running ? "실행 중" : result ? "다시 실행" : "검증 · 시뮬레이션 실행"}</button>
+            <button className="btn primary" onClick={focusRun} disabled={running}>{running ? "실행 중…" : result ? "다시 실행" : "검증·시뮬레이션 실행"}</button>
             {result && (
-              <button className="btn ghost" onClick={() => { navigator.clipboard?.writeText(location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+              <button className="btn outline" onClick={() => { navigator.clipboard?.writeText(location.href); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
                 {copied ? "주소 복사됨" : "결과 공유"}
               </button>
             )}
@@ -301,7 +308,7 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
                   <section className="card chart-card" aria-label="가격 차트">{priceChart(320)}</section>
                   <section className="card empty">
                     <h2>아직 판단이 없습니다</h2>
-                    <p>오른쪽(모바일은 아래) 실행 패널에서 기간을 고르고 실행하면 약 30~60초 뒤 매수 · 관망 · 매도 판단과 근거가 여기에 나옵니다.</p>
+                    <p>오른쪽(모바일은 아래) 실행 패널에서 기간을 고르고 실행하면 약 30~60초 뒤 매수·관망·매도 판단과 근거가 여기에 나옵니다.</p>
                     {past && past.runs.length > 0 && <p className="hint">이 종목의 이전 판단이 {past.runs.length}건 있습니다. '판단 기록' 탭에서 볼 수 있습니다.</p>}
                   </section>
                 </div>
@@ -312,7 +319,7 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
               <section className="card chart-card" aria-label="가격 차트">
                 <div className="chart-legend">
                   <span className="lg sma50">SMA50</span><span className="lg sma200">SMA200</span>
-                  {result && <span className="lg lv">손절 · 목표 ({horizon === "short" ? "단기" : horizon === "mid" ? "중기" : "장기"})</span>}
+                  {result && <span className="lg lv">손절·목표 ({horizon === "short" ? "단기" : horizon === "mid" ? "중기" : "장기"})</span>}
                   {result && (
                     <label className="marker-pick">매매 화살표
                       <select value={strategy} onChange={(e) => setStrategy(e.target.value)}>
@@ -342,7 +349,7 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
           {active === "history" && (
             <section className="card">
               <h2>{symbol} 판단 기록</h2>
-              {past ? <RunsTable data={past} onOpen={onOpen} /> : <p className="hint">불러오는 중</p>}
+              {past ? <RunsTable data={past} onOpen={onOpen} /> : <p className="hint">불러오는 중…</p>}
             </section>
           )}
         </div>
@@ -352,9 +359,12 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
             {result && (
               <section className="card meta">
                 <h2>이 결과</h2>
-                <p className="hint">{result.created_at ? `${dateTime(result.created_at)} 실행` : "방금 실행"} · {((result.meta.duration_ms ?? 0) / 1000).toFixed(1)}초
-                  · LLM {result.meta.llm_model ?? "-"} ({Math.round(result.meta.llm_calls ?? 0)}회)
-                  {result.position && ` · 보유 ${result.position.qty}주 @ ${usd(result.position.avg_price)}`}</p>
+                <p className="hint"><MetaList items={[
+                  result.created_at ? `${dateTime(result.created_at)} 실행` : "방금 실행",
+                  `${((result.meta.duration_ms ?? 0) / 1000).toFixed(1)}초`,
+                  result.position ? `보유 ${result.position.qty}주, 평균 ${usd(result.position.avg_price)}` : null,
+                ]} /></p>
+                <p className="hint">해설 모델 {result.meta.llm_model ?? "없음"} ({Math.round(result.meta.llm_calls ?? 0)}회 호출)</p>
               </section>
             )}
           </aside>

@@ -39,7 +39,8 @@ export function dateTime(iso: string): string {
 }
 
 export const VERDICT_LABEL: Record<Verdict, string> = { buy: "매수", hold: "관망", sell: "매도" };
-export const HORIZON_LABEL: Record<Horizon, string> = { short: "단기 · 1개월", mid: "중기 · 3개월", long: "장기 · 1년" };
+export const HORIZON_LABEL: Record<Horizon, string> = { short: "단기 1개월", mid: "중기 3개월", long: "장기 1년" };
+export const HORIZON_SHORT: Record<Horizon, string> = { short: "1개월", mid: "3개월", long: "1년" };
 export const HORIZONS: Horizon[] = ["short", "mid", "long"];
 
 /** 점수(-1~+1)의 방향 클래스. 플러스는 매수 쪽(빨강), 마이너스는 매도 쪽(파랑). */

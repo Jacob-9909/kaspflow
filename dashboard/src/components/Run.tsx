@@ -29,7 +29,7 @@ export function LoginForm({ onDone }: { onDone: () => void }) {
       <div className="row">
         <input id="pw" type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password"
                aria-describedby={err ? "pw-err" : undefined} aria-invalid={!!err} required />
-        <button className="btn" disabled={busy || !pw}>{busy ? "확인 중" : "로그인"}</button>
+        <button className="btn" disabled={busy || !pw}>{busy ? "확인 중…" : "로그인"}</button>
       </div>
       {err && <p className="field-error" id="pw-err" role="alert">{err}</p>}
       <p className="hint">결과·기록 보기는 누구나 됩니다. 실행은 NIM 호출량 보호를 위해 비밀번호가 필요합니다.</p>
@@ -72,7 +72,7 @@ export function RunPanel({ symbol, authed, loginEnabled, running, onRun, onLogin
   const posInvalid = (qty || avg) && !pos;
   return (
     <section className="card run-panel" id="run-panel" aria-labelledby="run-title">
-      <h2 id="run-title">검증 · 시뮬레이션</h2>
+      <h2 id="run-title">검증·시뮬레이션</h2>
       <fieldset className="segmented">
         <legend>판단 기간</legend>
         {HORIZONS.map((h) => (
@@ -92,10 +92,10 @@ export function RunPanel({ symbol, authed, loginEnabled, running, onRun, onLogin
       {authed ? (
         <button className="btn primary run-btn" id="run-btn" disabled={running || !!posInvalid}
                 onClick={() => { save(symbol, { horizon, qty, avg }); onRun(horizon, pos); }}>
-          {running ? <><span className="spinner" aria-hidden="true" /> 실행 중</> : "검증 · 시뮬레이션 실행"}
+          {running ? <><span className="spinner" aria-hidden="true" /> 실행 중…</> : "검증·시뮬레이션 실행"}
         </button>
       ) : loginEnabled ? <LoginForm onDone={onLogin} /> : <p className="hint">서버에 APP_PASSWORD 가 설정되지 않아 실행할 수 없습니다.</p>}
-      <p className="hint">전략 11종 x 변형 30개 백테스트 → 워크포워드 · 순열검정 · DSR → 몬테카를로 2,000경로 → 재무 · 밸류에이션 → 뉴스 감성 → 투자 대가 6인 → 종합 판단. 약 30~90초.</p>
+      <p className="hint">전략 11종 × 변형 30개 백테스트, 워크포워드·순열 검정·DSR, 몬테카를로 2,000경로, 재무·밸류에이션, 뉴스 감성, 투자 대가 6인을 차례로 돌려 종합 판단을 냅니다. 약 30~90초.</p>
     </section>
   );
 }
