@@ -50,7 +50,7 @@ export function PriceChart({ candles, sma50, sma200, markers, levels, theme, hei
     const times = new Set(candles.map((c) => c[0]));
     const mk: SeriesMarker<Time>[] = (markers ?? []).filter((m) => times.has(m.time)).sort((a, b) => a.time - b.time).map((m) =>
       m.side === "buy"
-        ? { time: m.time as UTCTimestamp, position: "belowBar", shape: "arrowUp", color: up, text: "매수" }
+        ? { time: m.time as UTCTimestamp, position: "belowBar", shape: "arrowUp", color: up }
         : { time: m.time as UTCTimestamp, position: "aboveBar", shape: "arrowDown", color: down, text: m.ret === undefined ? "매도" : pct(m.ret, 1) });
     series.setMarkers(mk);
     for (const lv of levels ?? []) {
