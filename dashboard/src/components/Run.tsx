@@ -1,7 +1,10 @@
 /** 실행 패널(기간·보유 정보·실행 버튼·로그인)과 진행 타임라인. */
 import { useState } from "react";
-import { api, type Horizon } from "../api";
-import { HORIZON_LABEL, HORIZONS } from "../format";
+import { api, type Horizon, type RunRow } from "../api";
+import { HORIZON_LABEL, HORIZONS, ago } from "../format";
+
+/** 같은 종목·기간·보유 정보로 이만큼 안에 실행한 결과가 있으면 먼저 보여 준다 (일봉 기준이라 결과가 거의 같다) */
+const RECENT_MS = 6 * 3600 * 1000;
 
 export interface StepState { key: string; label: string; status: "wait" | "running" | "done"; detail?: string; ms?: number }
 
@@ -58,10 +61,11 @@ function save(symbol: string, v: Saved) {
   } catch { /* 저장 못 해도 실행에는 문제없다 */ }
 }
 
-export function RunPanel({ symbol, authed, loginEnabled, running, onRun, onLogin, horizonHint }: {
+export function RunPanel({ symbol, authed, loginEnabled, running, onRun, onLogin, horizonHint, recent, viewingId, onOpenRun }: {
   symbol: string; authed: boolean; loginEnabled: boolean; running: boolean;
   onRun: (h: Horizon, pos: { qty: number; avg: number } | null) => void; onLogin: () => void;
   horizonHint?: Horizon;  // 저장된 결과를 보고 있으면 그 결과의 기간으로 시작한다
+  recent?: RunRow[]; viewingId?: string; onOpenRun?: (id: string) => void;
 }) {
   const [init] = useState(() => ({ ...loadSaved(symbol), ...(horizonHint ? { horizon: horizonHint } : {}) }));
   const [horizon, setHorizon] = useState<Horizon>(init.horizon);
@@ -70,6 +74,8 @@ export function RunPanel({ symbol, authed, loginEnabled, running, onRun, onLogin
   const q = Number(qty), a = Number(avg);
   const pos = qty && avg && q > 0 && a > 0 ? { qty: q, avg: a } : null;
   const posInvalid = (qty || avg) && !pos;
+  const same = (p: RunRow["position"]) => (p ? !!pos && p.qty === pos.qty && p.avg_price === pos.avg : !pos);
+  const dup = recent?.find((r) => r.horizon === horizon && same(r.position) && Date.now() - Date.parse(r.created_at) < RECENT_MS);
   return (
     <section className="card run-panel" id="run-panel" aria-labelledby="run-title">
       <h2 id="run-title">검증·시뮬레이션</h2>
@@ -94,10 +100,17 @@ export function RunPanel({ symbol, authed, loginEnabled, running, onRun, onLogin
         </div>
       </fieldset>
       {posInvalid && <p className="field-error" role="alert">수량과 평균 단가를 둘 다 0보다 크게 입력하세요.</p>}
+      {authed && dup && !running && (
+        <div className="rerun-note" role="status">
+          <p>{dup.id === viewingId ? `지금 보고 있는 결과를 ${ago(dup.created_at)}에 실행했습니다.` : `같은 조건으로 ${ago(dup.created_at)}에 실행한 결과가 있습니다.`}
+            {" "}일봉 기준이라 다시 실행해도 거의 같고, NIM 호출만 9번 더 씁니다.</p>
+          {dup.id !== viewingId && onOpenRun && <button type="button" className="btn primary" onClick={() => onOpenRun(dup.id)}>방금 결과 보기</button>}
+        </div>
+      )}
       {authed ? (
-        <button className="btn primary run-btn" id="run-btn" disabled={running || !!posInvalid}
+        <button className={`btn ${dup ? "outline" : "primary"} run-btn`} id="run-btn" disabled={running || !!posInvalid}
                 onClick={() => { save(symbol, { horizon, qty, avg }); onRun(horizon, pos); }}>
-          {running ? <><span className="spinner" aria-hidden="true" /> 실행 중…</> : "검증·시뮬레이션 실행"}
+          {running ? <><span className="spinner" aria-hidden="true" /> 실행 중…</> : dup ? "그래도 새로 실행" : "검증·시뮬레이션 실행"}
         </button>
       ) : loginEnabled ? <LoginForm onDone={onLogin} /> : <p className="hint">서버에 APP_PASSWORD 가 설정되지 않아 실행할 수 없습니다.</p>}
       <p className="hint">전략 11종 × 변형 30개 백테스트, 워크포워드 검증, 순열 검정, DSR, 몬테카를로 2,000경로, 재무와 밸류에이션, 뉴스 감성, 투자 대가 6인을 차례로 돌려 종합 판단을 냅니다. 약 30~90초.</p>

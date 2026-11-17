@@ -295,6 +295,10 @@ li::marker { color: var(--text-faint); }
   transition: border-color .15s var(--ease), box-shadow .15s var(--ease); }
 .position input:focus, .login input:focus { outline: none; border-color: var(--text); box-shadow: 0 0 0 3px var(--accent-weak); }
 .run-btn { width: 100%; min-height: 48px; font-size: var(--fs-lead); margin-bottom: var(--s3); }
+.rerun-note { display: flex; flex-direction: column; gap: var(--s3); margin-bottom: var(--s3); padding: var(--s3) var(--s4);
+  border-radius: var(--r-md); background: var(--surface-2); font-size: var(--fs-sm); }
+.rerun-note p { margin: 0; }
+.rerun-note .btn { width: 100%; min-height: 44px; }
 .login > label { margin-bottom: 6px; } /* 다른 입력칸의 라벨 간격(6px)과 맞춘다 */
 .login .row { display: flex; gap: var(--s2); } .login input { flex: 1; min-width: 0; }
 .login .btn { min-height: 44px; }
