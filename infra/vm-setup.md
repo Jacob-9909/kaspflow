@@ -68,6 +68,31 @@ IMAGE_TAG=sha-$(git rev-parse --short=7 HEAD) docker compose -f docker-compose.p
 
 ---
 
+## L. 판단 기록 DB 백업 (2026-11-18)
+
+판단 기록(`crypto` DB 의 `stock` 스키마)을 매일 07:30 에 `pg_dump` 로 떠서 `/var/backups/postgres/` 에 14일 보관한다.
+`stock.cache` 는 캐시라 구조만 남긴다. 파일 이름은 `kaspflow-stock-YYYYMMDD.dump`(custom 형식).
+
+```bash
+# 설치 (저장소 루트에서)
+sudo install -m 755 infra/kaspflow-db-backup.sh /usr/local/bin/kaspflow-db-backup
+sudo install -d -o postgres -g postgres -m 700 /var/backups/postgres
+sudo cp infra/kaspflow-db-backup.service infra/kaspflow-db-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now kaspflow-db-backup.timer
+sudo systemctl start kaspflow-db-backup.service && journalctl -u kaspflow-db-backup -n 3 --no-pager   # 한 번 돌려 확인
+
+# 백업 파일 확인 (표 목록)
+sudo -u postgres pg_restore --list /var/backups/postgres/kaspflow-stock-YYYYMMDD.dump | grep 'TABLE DATA'
+
+# 복구 (stock 스키마를 백업 시점으로 되돌린다. 그 뒤의 기록은 사라지니 먼저 지금 상태를 한 번 더 백업할 것)
+sudo -u postgres pg_restore -d crypto --clean --if-exists -n stock /var/backups/postgres/kaspflow-stock-YYYYMMDD.dump
+```
+
+같은 VM 디스크에 있으므로 실수로 지운 기록과 깨진 테이블은 되살리지만, VM 자체를 잃으면 함께 사라진다.
+가끔 맥으로 복사해 두려면: `ssh oracle_vm 'sudo cat /var/backups/postgres/kaspflow-stock-YYYYMMDD.dump' > kaspflow-stock.dump`
+
+---
+
 ## B. 새 VM 에 처음부터 (1회)
 
 ### 1. 컨테이너 런타임

@@ -15,7 +15,7 @@
 #   sudo systemctl reload caddy
 #
 # 사전 조건:
-#   - bit-kaspflow.duckdns.org A 레코드 → 161.33.134.252 (완료)
+#   - bit-kaspflow.duckdns.org A 레코드 → 서버 공인 IP (완료)
 #   - 80·443 이 외부에서 열려 있어야 함 (OCI VCN Security List + iptables 양쪽).
 #     80 은 Let's Encrypt HTTP-01 챌린지용 — 닫으면 인증서 발급 실패.
 #

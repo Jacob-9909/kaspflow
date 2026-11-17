@@ -1,0 +1,11 @@
+# kaspflow 판단 기록 백업 (oneshot) — 타이머가 하루 한 번 깨운다. 설치는 infra/vm-setup.md §L.
+[Unit]
+Description=kaspflow 판단 기록 백업 (pg_dump crypto.stock)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+ExecStart=/usr/local/bin/kaspflow-db-backup
+StandardOutput=journal
+StandardError=journal
