@@ -55,9 +55,9 @@ export const MODULE_TAB: Record<string, string> = {
 
 export function FactorGrid({ r, horizon, onOpen }: { r: Result; horizon: Horizon; onOpen: (tab: string) => void }) {
   const v = r.verdicts[horizon];
-  // 판단에 많이 반영된 모듈부터 (엔진이 contributions 를 |반영| 큰 순으로 준다). 판단에서 빠진 모듈은 맨 뒤
-  const order = Object.keys(v.contributions);
-  const rank = (key: string) => (order.includes(key) ? order.indexOf(key) : order.length);
+  // 판단에 많이 반영된 모듈부터, 판단에서 빠진 모듈은 맨 뒤. 키 순서에 기대지 않고 값으로 정렬한다
+  // (저장된 결과는 PostgreSQL JSONB 를 거치며 키가 길이·글자순으로 다시 놓인다)
+  const rank = (key: string) => (key in v.contributions ? -Math.abs(v.contributions[key]) : 1);
   const mods = [...r.modules].sort((a, b) => rank(a.key) - rank(b.key));
   return (
     <section className="card" aria-labelledby="factor-title">
