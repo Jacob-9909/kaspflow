@@ -1,0 +1,12 @@
+# kaspflow 판단 기록 백업 타이머 — 매일 07:30 (서버 시간 KST). 미국 장 마감(05~06시) 뒤 자동 판단까지 담긴다.
+[Unit]
+Description=kaspflow 판단 기록 매일 백업
+
+[Timer]
+OnCalendar=*-*-* 07:30
+Persistent=true
+RandomizedDelaySec=5min
+Unit=kaspflow-db-backup.service
+
+[Install]
+WantedBy=timers.target
