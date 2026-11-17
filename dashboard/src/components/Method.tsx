@@ -1,6 +1,78 @@
 /** 검증 방법 페이지: 판단이 어떻게 나오는지 한 화면에서 설명한다 (docs/methodology.md 의 요약). */
-import { GRADE_INFO } from "../format";
+import type { Horizon, Verdict } from "../api";
+import bt from "../engine-backtest.json";
+import { GRADE_INFO, HORIZON_LABEL, HORIZONS, VERDICT_LABEL, pct, signed } from "../format";
 import { GLOSSARY } from "./Glossary";
+
+interface VStat { n: number; hit: number; base: number; avg: number }
+interface HStat { n: number; avg: number; by_verdict: Partial<Record<Verdict, VStat>>; by_conf: { lo: number; hi: number; n: number; hit: number; base: number }[] }
+const H = bt.horizons as Record<Horizon, HStat>;
+const VERDICTS: Verdict[] = ["buy", "hold", "sell"];
+
+/** 결과(JSON)에서 결론 문장을 만든다. 다시 계산하면 문장도 따라 바뀐다. */
+function conclusions(): string[] {
+  const cells = HORIZONS.flatMap((h) => VERDICTS.map((v) => ({ h, v, x: H[h].by_verdict[v] })).filter((c): c is { h: Horizon; v: Verdict; x: VStat } => !!c.x));
+  const name = (c: { h: Horizon; v: Verdict }) => `${HORIZON_LABEL[c.h]} ${VERDICT_LABEL[c.v]}`;
+  const better = cells.filter((c) => c.x.hit - c.x.base >= 0.03);
+  const worse = cells.filter((c) => c.x.hit - c.x.base <= -0.03);
+  const out = [better.length
+    ? `기준선보다 3%p 넘게 잘 맞은 곳: ${better.map((c) => `${name(c)}(${signed((c.x.hit - c.x.base) * 100, 1)}%p)`).join(", ")}.`
+    : "어느 기간, 어느 판단도 기준선보다 3%p 넘게 잘 맞지 않았습니다. 이 세 모듈만으로는 아직 예측력이 확인되지 않았습니다."];
+  if (worse.length) out.push(`기준선보다 3%p 넘게 덜 맞은 곳: ${worse.map((c) => `${name(c)}(${signed((c.x.hit - c.x.base) * 100, 1)}%p)`).join(", ")}.`);
+  if (HORIZONS.every((h) => (H[h].by_verdict.sell?.avg ?? -1) > H[h].avg))
+    out.push("세 기간 모두 매도 판단 뒤 주가가 전체 평균보다 더 올랐습니다. 이 모듈들의 매도 신호는 거꾸로 맞았습니다.");
+  if (HORIZONS.every((h) => { const c = H[h].by_conf; return c.length > 1 && c[c.length - 1].hit - c[c.length - 1].base <= c[0].hit - c[0].base; }))
+    out.push("신뢰도가 높은 판단이 더 잘 맞지도 않았습니다.");
+  return out;
+}
+
+function EngineRecord() {
+  return (
+    <section className="card" aria-labelledby="record-title">
+      <h2 id="record-title">판단 엔진의 과거 성적 <span className="sub">부분 검증</span></h2>
+      <p>대형주 {bt.symbols.length}개를 {bt.start.slice(0, 7)}부터 {bt.end.slice(0, 7)}까지 매달 한 번, 그 시점까지의 데이터만 써서 다시 판단하고
+        1개월, 3개월, 1년 뒤 결과와 맞춰 봤습니다. 적중 기준은 판단 기록과 같습니다(매수 +2% 초과, 매도 -2% 미만, 관망 ±5% 이내).
+        기준선은 같은 기간에 늘 그 판단을 했을 때의 적중률입니다.</p>
+      <ul className="record-conclusion">{conclusions().map((x) => <li key={x}>{x}</li>)}</ul>
+      <div className="table-wrap"><table className="table compact">
+        <caption className="sr-only">기간·판단별 과거 적중률과 기준선</caption>
+        <thead><tr><th>기간</th><th>판단</th><th>판단 수</th><th>적중률</th><th>기준선</th><th>차이</th><th>이후 평균 수익률</th></tr></thead>
+        <tbody>
+          {HORIZONS.flatMap((h) => VERDICTS.map((v, i) => {
+            const x = H[h].by_verdict[v];
+            if (!x) return null;
+            return (
+              <tr key={h + v}>
+                {i === 0 ? <th scope="row" rowSpan={3}>{HORIZON_LABEL[h]}<small className="record-avg">전체 평균 {pct(H[h].avg)}</small></th> : null}
+                <td className="l"><span className={`vbadge v-${v}`}>{VERDICT_LABEL[v]}</span></td>
+                <td className="num">{x.n.toLocaleString()}</td>
+                <td className="num">{pct(x.hit, 1, false)}</td>
+                <td className="num">{pct(x.base, 1, false)}</td>
+                <td className="num">{signed((x.hit - x.base) * 100, 1)}%p</td>
+                <td className="num">{pct(x.avg)}</td>
+              </tr>
+            );
+          }))}
+        </tbody>
+      </table></div>
+      <div className="table-wrap"><table className="table compact">
+        <caption className="sr-only">신뢰도 구간별 적중률</caption>
+        <thead><tr><th>기간</th>{H.short.by_conf.map((c) => <th key={c.lo}>신뢰도 {c.lo === 0 ? `${c.hi * 100}% 미만` : c.hi >= 1 ? `${c.lo * 100}% 이상` : `${c.lo * 100}~${c.hi * 100}%`}</th>)}</tr></thead>
+        <tbody>
+          {HORIZONS.map((h) => (
+            <tr key={h}><th scope="row">{HORIZON_LABEL[h]}</th>
+              {H[h].by_conf.map((c) => <td key={c.lo} className="num">{pct(c.hit, 1, false)} <small>기준선 {pct(c.base, 1, false)}</small></td>)}</tr>
+          ))}
+        </tbody>
+      </table></div>
+      <p className="hint">쓴 모듈: {bt.modules.join(", ")}. 판단 가중치로 단기의 {pct(bt.weight_share.short, 0, false)}, 중기의 {pct(bt.weight_share.mid, 0, false)},
+        장기의 {pct(bt.weight_share.long, 0, false)}입니다. 재무, 밸류에이션, 애널리스트, 뉴스, 투자 대가는 과거 시점 값이 없어 뺐고, 검증된 전략 신호는 시점마다
+        워크포워드 검증을 다시 돌려야 해서 뺐습니다. 지금의 대형주를 골랐으니 생존 편향이 있고, 1년 기간은 표본 창이 겹쳐 실제 독립 표본이 적습니다.
+        결과 화면의 판단은 이 세 모듈에 나머지를 더한 것이라 이 성적과 같지 않습니다. 실전 성적은 판단 기록에 쌓입니다.
+        ({bt.generated_at.slice(0, 10)} 계산, <code>backend/engine_backtest.py</code>)</p>
+    </section>
+  );
+}
 
 const STEPS: [string, string][] = [
   ["데이터 수집", "10년 일봉(배당과 분할 조정), 재무제표, 애널리스트 의견, 최근 3주 뉴스, S&P500(SPY), VIX, 금리, 섹터 ETF"],
@@ -57,6 +129,8 @@ export default function Method() {
           <p className="hint">단기는 가격 흐름과 뉴스, 장기는 가치와 재무 품질이 판단을 이끈다.</p>
         </div>
       </section>
+
+      <EngineRecord />
 
       <section className="card">
         <h2>전략 검증 등급</h2>

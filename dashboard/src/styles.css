@@ -189,6 +189,7 @@ li::marker { color: var(--text-faint); }
 .table.compact th, .table.compact td { padding: var(--s2); }
 .table caption { text-align: left; color: var(--text-muted); font-size: var(--fs-label); padding: 0 var(--s2) var(--s2); }
 .table.text th, .table.text td { text-align: left; white-space: normal; } /* 글자 위주 표 */
+.table td.l, .table th.l { text-align: left; }
 .table td.headline { white-space: normal; min-width: 220px; text-align: left; color: var(--text-muted); }
 .strat-name { font-weight: 600; } .origin { margin-top: var(--s1); color: var(--text-faint); font-size: var(--fs-caption); font-weight: 400; }
 .kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4) var(--s6); margin: 0; }
@@ -414,6 +415,9 @@ li::marker { color: var(--text-faint); }
 .grade-legend dd { margin: 0; font-size: var(--fs-sm); }
 .grade-legend dd small { margin-left: var(--s2); color: var(--text-muted); font-size: var(--fs-label); }
 .plan-note { margin: calc(-1 * var(--s2)) 0 var(--s4); }
+.record-conclusion { margin: var(--s3) 0 var(--s5); padding-left: var(--s5); font-weight: 600; }
+.record-conclusion li + li { margin-top: var(--s1); }
+.record-avg { display: block; font-weight: 500; color: var(--text-muted); font-size: var(--fs-caption); }
 
 /* 근거 */
 .reasons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s6) var(--s7); }
