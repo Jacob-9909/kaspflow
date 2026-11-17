@@ -75,12 +75,12 @@ class DB:
 
     def list_runs(self, symbol: str | None, limit: int) -> list[dict]:
         sql = ("SELECT id, symbol, name, created_at, horizon, verdict, score, confidence, price, "
-               "result->'narrative'->>'headline', result->'position' FROM stock.analysis_run "
+               "result->'narrative'->>'headline', result->'position', result->'meta'->>'source' FROM stock.analysis_run "
                + ("WHERE symbol = %s " if symbol else "") + "ORDER BY created_at DESC LIMIT %s")
         args = (symbol, limit) if symbol else (limit,)
         with self.pool.connection() as c:
             rows = c.execute(sql, args).fetchall()
-        keys = ("id", "symbol", "name", "created_at", "horizon", "verdict", "score", "confidence", "price", "headline", "position")
+        keys = ("id", "symbol", "name", "created_at", "horizon", "verdict", "score", "confidence", "price", "headline", "position", "source")
         return [dict(zip(keys, row)) for row in rows]
 
     def get_run(self, run_id: str) -> dict | None:
@@ -89,3 +89,33 @@ class DB:
         if not row:
             return None
         return {**row[0], "run_id": run_id, "created_at": row[1].isoformat()}
+
+    # --- 관심 종목 ---
+    def list_watchlist(self) -> list[dict]:
+        """관심 종목과 각 종목·기간의 최근 실행 두 건 (마지막 판단과 그 전 판단: 판단이 바뀌었는지 본다)."""
+        sql = ("SELECT w.symbol, w.horizon, w.added_at, r.id, r.created_at, r.verdict, r.score, r.name "
+               "FROM stock.watchlist w LEFT JOIN LATERAL (SELECT id, created_at, verdict, score, name FROM stock.analysis_run a "
+               "WHERE a.symbol = w.symbol AND a.horizon = w.horizon ORDER BY created_at DESC LIMIT 2) r ON true "
+               "ORDER BY w.added_at, w.symbol, r.created_at DESC")
+        with self.pool.connection() as c:
+            rows = c.execute(sql).fetchall()
+        out: dict[str, dict] = {}
+        for sym, hz, added, rid, at, verdict, score, name in rows:
+            w = out.setdefault(sym, {"symbol": sym, "horizon": hz, "added_at": added, "name": None, "last": None, "prev": None})
+            if rid is None:
+                continue
+            run = {"id": str(rid), "created_at": at, "verdict": verdict, "score": score}
+            if w["last"] is None:
+                w["last"], w["name"] = run, name
+            else:
+                w["prev"] = run
+        return list(out.values())
+
+    def add_watch(self, symbol: str, horizon: str) -> None:
+        with self.pool.connection() as c:
+            c.execute("INSERT INTO stock.watchlist (symbol, horizon) VALUES (%s, %s) "
+                      "ON CONFLICT (symbol) DO UPDATE SET horizon = EXCLUDED.horizon", (symbol, horizon))
+
+    def remove_watch(self, symbol: str) -> None:
+        with self.pool.connection() as c:
+            c.execute("DELETE FROM stock.watchlist WHERE symbol = %s", (symbol,))

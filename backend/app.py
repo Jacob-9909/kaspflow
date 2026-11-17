@@ -6,6 +6,7 @@
   GET  /analyze/{symbol}       검증·시뮬레이션 실행 (SSE 진행 스트림, 로그인 필요)
   GET  /runs                   실행 기록 + 판단 뒤 수익률·적중 여부
   GET  /runs/{id}              저장된 결과 전체
+  GET  /watchlist              관심 종목과 최근 판단 (POST·DELETE /watchlist 는 로그인 필요)
   POST /auth/login|logout, GET /auth/me   비밀번호 로그인 (APP_PASSWORD)
 
 실행만 로그인이 필요하고 결과 보기는 공개다 (2026-11-16 결정: NIM 호출 할당량 보호).
@@ -25,6 +26,7 @@ import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -43,6 +45,9 @@ COOKIE = "kf_session"
 SESSION_S = 14 * 86400
 HORIZON_DAYS = {"short": 30, "mid": 91, "long": 365}   # 적중 평가까지 기다리는 달력 일수
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_RUNS", "2"))
+NY = ZoneInfo("America/New_York")
+AUTORUN_AT = (16, 40)   # 관심 종목 자동 판단 시각 (뉴욕). 16:00 장 마감 뒤 일봉이 확정되고 나서
+WATCH_MAX = int(os.environ.get("WATCHLIST_MAX", "10"))   # 하루 NIM 호출 = 종목 수 x 9
 
 
 class State:
@@ -51,6 +56,7 @@ class State:
     sem: asyncio.Semaphore | None = None
     tasks: set = set()
     login_fail: dict[str, deque] = defaultdict(deque)
+    autorun: asyncio.Task | None = None
 
 
 S = State()
@@ -72,7 +78,11 @@ async def lifespan(_: FastAPI):
         log.error("schema init failed: %r", exc)
     S.llm = NimLLM.from_env(cache=S.db)
     log.info("kaspflow up: llm=%s model=%s", S.llm.enabled, S.llm.model)
+    if os.environ.get("AUTORUN", "1") != "0":
+        S.autorun = asyncio.create_task(_autorun_loop())
     yield
+    if S.autorun:
+        S.autorun.cancel()
     S.db.close()
 
 
@@ -245,6 +255,100 @@ async def analyze(symbol: str, request: Request, horizon: str = Query("mid", pat
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ------------------------------------------------------------
+# 관심 종목 · 자동 판단
+# ------------------------------------------------------------
+def _slot(now: datetime, step: int) -> datetime:
+    """평일 16:40(뉴욕) 자동 판단 시각. step=-1 이면 now 이전 가장 최근, +1 이면 now 다음.
+    ponytail: 미국 공휴일은 거르지 않는다 (그날은 같은 일봉으로 한 번 더 판단할 뿐)."""
+    t = now.astimezone(NY).replace(hour=AUTORUN_AT[0], minute=AUTORUN_AT[1], second=0, microsecond=0)
+    if (step < 0 and t > now) or (step > 0 and t <= now):
+        t += timedelta(days=step)
+    while t.weekday() >= 5:
+        t += timedelta(days=step)
+    return t
+
+
+def autorun_due(items: list[dict], now: datetime) -> list[dict]:
+    """자동 판단이 밀린 관심 종목: 가장 최근 자동 판단 시각 뒤로 같은 종목·기간의 실행이 없는 것 (수동 실행도 친다)."""
+    slot = _slot(now, -1)
+    return [w for w in items if not w["last"] or w["last"]["created_at"] < slot]
+
+
+async def _autorun_symbol(symbol: str, horizon: str) -> None:
+    async with S.sem:
+        async for ev in pipeline.run(symbol, horizon, None, _store(), S.llm):
+            if ev["type"] == "result":
+                ev["data"]["meta"]["source"] = "auto"
+                await asyncio.to_thread(S.db.save_run, str(uuid.uuid4()), ev["data"])
+
+
+async def _autorun_loop() -> None:
+    """관심 종목 자동 판단. 평일 장 마감 뒤 하루 한 번, 한 종목씩 차례로 돈다 (NIM 호출이 몰리지 않게).
+    다시 뜨면 밀린 것부터 처리한다. 실패한 종목은 다음 시각에 다시 시도한다."""
+    await asyncio.sleep(60)   # 기동 직후 자동배포 헬스체크와 겹치지 않게
+    while True:
+        try:
+            items = await asyncio.to_thread(S.db.list_watchlist)
+            for w in autorun_due(items, datetime.now(timezone.utc)):
+                try:
+                    await _autorun_symbol(w["symbol"], w["horizon"])
+                    log.info("autorun ok %s %s", w["symbol"], w["horizon"])
+                except Exception as exc:  # noqa: BLE001 - 한 종목이 실패해도 나머지는 돈다
+                    log.warning("autorun failed %s: %r", w["symbol"], exc)
+        except Exception as exc:  # noqa: BLE001 - DB 가 잠깐 안 될 때
+            log.warning("autorun check failed: %r", exc)
+        now = datetime.now(timezone.utc)
+        await asyncio.sleep(max(60.0, (_slot(now, 1) - now).total_seconds()))
+
+
+def _guard(request: Request) -> None:
+    if not token_ok(request.cookies.get(COOKIE)):
+        raise HTTPException(401, "로그인이 필요합니다")
+    if request.headers.get("sec-fetch-site") not in (None, "same-origin", "none"):
+        raise HTTPException(403, "다른 사이트에서 온 요청은 받지 않습니다")
+
+
+class Watch(BaseModel):
+    symbol: str
+    horizon: str = "mid"
+
+
+@app.get("/watchlist")
+async def watchlist():
+    items = await asyncio.to_thread(S.db.list_watchlist)
+    iso = lambda r: r and {**r, "created_at": r["created_at"].isoformat()}
+    return {"items": [{**w, "added_at": w["added_at"].isoformat(), "last": iso(w["last"]), "prev": iso(w["prev"])} for w in items],
+            "next_run": _slot(datetime.now(timezone.utc), 1).isoformat(), "max": WATCH_MAX}
+
+
+@app.post("/watchlist")
+async def watch_add(body: Watch, request: Request):
+    _guard(request)
+    if body.horizon not in HORIZON_DAYS:
+        raise HTTPException(400, "기간은 short, mid, long 중 하나입니다")
+    try:
+        sym = market.clean_symbol(body.symbol)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    items = await asyncio.to_thread(S.db.list_watchlist)
+    if len(items) >= WATCH_MAX and sym not in {w["symbol"] for w in items}:
+        raise HTTPException(400, f"관심 종목은 {WATCH_MAX}개까지입니다 (하루 NIM 호출 보호)")
+    await asyncio.to_thread(S.db.add_watch, sym, body.horizon)
+    return {"ok": True}
+
+
+@app.delete("/watchlist/{symbol}")
+async def watch_remove(symbol: str, request: Request):
+    _guard(request)
+    try:
+        sym = market.clean_symbol(symbol)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await asyncio.to_thread(S.db.remove_watch, sym)
+    return {"ok": True}
 
 
 # ------------------------------------------------------------

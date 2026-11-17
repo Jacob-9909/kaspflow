@@ -36,7 +36,7 @@ export function date(iso: string | null | undefined): string {
 /** 몇 분 전, 몇 시간 전 */
 export function ago(iso: string): string {
   const min = Math.max(1, Math.round((Date.now() - Date.parse(iso)) / 60000));
-  return min < 60 ? `${min}분 전` : `${Math.round(min / 60)}시간 전`;
+  return min < 60 ? `${min}분 전` : min < 1440 ? `${Math.round(min / 60)}시간 전` : `${Math.round(min / 1440)}일 전`;
 }
 
 export function dateTime(iso: string): string {
