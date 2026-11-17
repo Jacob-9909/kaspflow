@@ -28,3 +28,10 @@ CREATE TABLE IF NOT EXISTS stock.analysis_run (
 );
 CREATE INDEX IF NOT EXISTS idx_run_symbol_time ON stock.analysis_run (symbol, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_run_time ON stock.analysis_run (created_at DESC);
+
+-- 관심 종목. 평일 미국 장 마감 뒤 하루 한 번 자동으로 판단한다 (기록이 쌓여 적중률의 실전 표본이 된다).
+CREATE TABLE IF NOT EXISTS stock.watchlist (
+    symbol    TEXT        PRIMARY KEY,
+    horizon   TEXT        NOT NULL DEFAULT 'mid' CHECK (horizon IN ('short', 'mid', 'long')),
+    added_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

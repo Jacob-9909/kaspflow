@@ -112,7 +112,12 @@ export interface RunRow {
   id: string; symbol: string; name: string; created_at: string; horizon: Horizon; verdict: Verdict; score: number; confidence: number;
   price: number; headline: string | null; due: string; evaluated: boolean; return: number | null; hit: boolean | null; current: number | null;
   position?: { qty: number; avg_price: number } | null;
+  source?: string | null;   // "auto" 면 관심 종목 자동 판단
 }
+
+export interface WatchRun { id: string; created_at: string; verdict: Verdict; score: number }
+export interface WatchItem { symbol: string; horizon: Horizon; added_at: string; name: string | null; last: WatchRun | null; prev: WatchRun | null }
+export interface WatchResponse { items: WatchItem[]; next_run: string; max: number }
 
 export interface RunsResponse {
   runs: RunRow[];
@@ -149,6 +154,10 @@ export const api = {
   quote: (symbol: string) => getJSON<Quote>(`/quote/${encodeURIComponent(symbol)}`),
   runs: (symbol?: string) => getJSON<RunsResponse>(`/runs${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`),
   run: (id: string) => getJSON<Result>(`/runs/${encodeURIComponent(id)}`),
+  watchlist: () => getJSON<WatchResponse>("/watchlist"),
+  watchAdd: (symbol: string, horizon: Horizon) => getJSON<{ ok: boolean }>("/watchlist", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol, horizon }) }),
+  watchRemove: (symbol: string) => getJSON<{ ok: boolean }>(`/watchlist/${encodeURIComponent(symbol)}`, { method: "DELETE" }),
 };
 
 /** 검증·시뮬레이션 실행. EventSource 는 같은 출처 쿠키를 자동으로 보낸다. 반환값으로 연결을 끊는다. */

@@ -8,7 +8,7 @@
  * 라우터 라이브러리 없이 URLSearchParams + history API 로 처리한다. 탭 전환은 replaceState (뒤로 가기가 탭마다 쌓이지 않게).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { analyze, api, type Horizon, type Me, type Quote, type Result, type RunsResponse } from "./api";
+import { analyze, api, type Horizon, type Me, type Quote, type Result, type RunsResponse, type WatchResponse } from "./api";
 import { PriceChart, type PriceLevel } from "./components/Charts";
 import { History, Home, RunsTable } from "./components/History";
 import Method from "./components/Method";
@@ -111,7 +111,7 @@ export default function App() {
         </nav>
       </header>
       <main id="main" className="container">
-        {route.view === "home" && <Home onPick={(s) => go({ view: "symbol", symbol: s })} onOpen={(id) => go({ view: "symbol", run: id })} />}
+        {route.view === "home" && <Home authed={!!me?.authenticated} onPick={(s) => go({ view: "symbol", symbol: s })} onOpen={(id) => go({ view: "symbol", run: id })} />}
         {route.view === "history" && <History onOpen={(id) => go({ view: "symbol", run: id })} />}
         {route.view === "method" && <Method />}
         {route.view === "symbol" && (
@@ -143,6 +143,8 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
   const [strategy, setStrategy] = useState("");
   const [past, setPast] = useState<RunsResponse | null>(null);
   const [copied, setCopied] = useState(false);
+  const [watch, setWatch] = useState<WatchResponse | null>(null);
+  const [watchErr, setWatchErr] = useState<string | null>(null);
   const symbol = result?.symbol ?? route.symbol ?? quote?.symbol;
   const tab = route.tab && TAB_KEYS.includes(route.tab) ? route.tab : "summary";
 
@@ -161,6 +163,22 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
   useEffect(() => {
     if (symbol) api.runs(symbol).then(setPast).catch(() => setPast(null));
   }, [symbol, result?.run_id]);
+
+  useEffect(() => {
+    if (me?.authenticated) api.watchlist().then(setWatch).catch(() => setWatch(null));
+  }, [me?.authenticated]);
+  const watched = !!symbol && !!watch?.items.some((x) => x.symbol === symbol);
+  const toggleWatch = async () => {
+    if (!symbol) return;
+    setWatchErr(null);
+    try {
+      if (watched) await api.watchRemove(symbol);
+      else await api.watchAdd(symbol, result?.horizon ?? horizon);
+      setWatch(await api.watchlist());
+    } catch (e) {
+      setWatchErr((e as Error).message);
+    }
+  };
 
   useEffect(() => {
     if (!result) return;
@@ -285,6 +303,10 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
                 {copied ? "주소 복사됨" : "결과 공유"}
               </button>
             )}
+            {me?.authenticated && (
+              <button className="btn outline" aria-pressed={watched} onClick={toggleWatch}>{watched ? "관심 종목에서 빼기" : "관심 종목 추가"}</button>
+            )}
+            {watchErr && <p className="field-error" role="alert">{watchErr}</p>}
           </div>
         </header>
       ) : !error && <div className="skeleton head" aria-busy="true" />}

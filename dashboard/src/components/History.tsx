@@ -1,8 +1,9 @@
 /** 홈(검색·소개·최근 판단)과 판단 기록(적중률). 판단 기록이 곧 이 검증기 자체의 사후 검증이다. */
 import { useEffect, useState } from "react";
-import { api, type RunsResponse, type Verdict } from "../api";
-import { HORIZON_LABEL, VERDICT_LABEL, dateTime, dirClass, pct, signed } from "../format";
+import { api, type RunsResponse, type Verdict, type WatchItem, type WatchResponse } from "../api";
+import { HORIZON_LABEL, HORIZON_SHORT, VERDICT_LABEL, ago, dateTime, dirClass, pct, signed } from "../format";
 import Search from "./Search";
+import { Chevron } from "./ui";
 
 const POPULAR = ["NVDA", "AAPL", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "AMD", "PLTR", "SPY", "QQQ", "BTC-USD"];
 const MODULE_INFO: [string, string][] = [
@@ -29,7 +30,7 @@ export function RunsTable({ data, onOpen, compact = false }: { data: RunsRespons
           {data.runs.map((r) => (
             <tr key={r.id} className="clickable" tabIndex={0} onClick={() => onOpen(r.id)}
                 onKeyDown={(e) => { if (e.key === "Enter") onOpen(r.id); }}>
-              <td className="num">{dateTime(r.created_at)}</td>
+              <td className="num">{dateTime(r.created_at)}{r.source === "auto" && <span className="tag">자동</span>}</td>
               <th scope="row"><span className="strat-name">{r.symbol}</span><div className="origin">{r.name}</div></th>
               <td>{HORIZON_LABEL[r.horizon]}</td>
               <td><span className={`vbadge v-${r.verdict}`}>{VERDICT_LABEL[r.verdict]}</span></td>
@@ -60,7 +61,42 @@ function Stats({ data }: { data: RunsResponse }) {
   );
 }
 
-export function Home({ onPick, onOpen }: { onPick: (s: string) => void; onOpen: (id: string) => void }) {
+const changed = (x: WatchItem) => !!(x.last && x.prev && x.last.verdict !== x.prev.verdict);
+
+/** 관심 종목: 평일 장 마감 뒤 자동 판단한 최근 결과. 판단이 바뀐 종목을 맨 위에 둔다. */
+function Watchlist({ authed, onPick, onOpen }: { authed: boolean; onPick: (s: string) => void; onOpen: (id: string) => void }) {
+  const [w, setW] = useState<WatchResponse | null>(null);
+  useEffect(() => { api.watchlist().then(setW).catch(() => setW(null)); }, []);
+  if (!w || (!w.items.length && !authed)) return null;
+  const rows = [...w.items].sort((a, b) => Number(changed(b)) - Number(changed(a)));
+  return (
+    <section className="card" aria-labelledby="watch-title">
+      <h2 id="watch-title">관심 종목 <span className="sub">평일 미국 장 마감 뒤 하루 한 번 자동으로 판단합니다. 다음 판단 {dateTime(w.next_run)}</span></h2>
+      {!rows.length ? <p className="hint">종목 화면에서 '관심 종목 추가'를 누르면 여기에 모입니다 (최대 {w.max}개). 판단이 바뀐 종목이 맨 위에 옵니다.</p> : (
+        <ul className="watch-list">
+          {rows.map((x) => (
+            <li key={x.symbol}>
+              <button type="button" className="watch-row" onClick={() => (x.last ? onOpen(x.last.id) : onPick(x.symbol))}
+                      aria-label={`${x.symbol} ${HORIZON_LABEL[x.horizon]} ${x.last ? VERDICT_LABEL[x.last.verdict] : "첫 판단 전"}${changed(x) ? `, ${VERDICT_LABEL[x.prev!.verdict]}에서 바뀜` : ""}`}>
+                <span className="watch-sym"><b>{x.symbol}</b><small>{x.name ?? ""}</small></span>
+                <span className="watch-hz">{HORIZON_SHORT[x.horizon]}</span>
+                <span className="watch-verdict">
+                  {x.last ? <span className={`vbadge v-${x.last.verdict}`}>{VERDICT_LABEL[x.last.verdict]}</span> : <span className="hint">첫 판단 전</span>}
+                  {changed(x) && <span className="tag">{VERDICT_LABEL[x.prev!.verdict]}에서 바뀜</span>}
+                </span>
+                <span className={`num watch-score ${dirClass(x.last?.score)}`}>{x.last ? signed(x.last.score * 100, 0) : ""}</span>
+                <span className="hint watch-time">{x.last ? ago(x.last.created_at) : ""}</span>
+                <Chevron />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+export function Home({ authed, onPick, onOpen }: { authed: boolean; onPick: (s: string) => void; onOpen: (id: string) => void }) {
   const [data, setData] = useState<RunsResponse | null>(null);
   useEffect(() => { api.runs().then(setData).catch(() => setData({ runs: [], stats: { evaluated: 0, hit_rate: null, by_verdict: {} } })); }, []);
   return (
@@ -71,6 +107,7 @@ export function Home({ onPick, onOpen }: { onPick: (s: string) => void; onOpen: 
         <Search onPick={onPick} big autoFocus />
         <div className="chips">{POPULAR.map((s) => <button key={s} className="chip" onClick={() => onPick(s)}>{s}</button>)}</div>
       </section>
+      <Watchlist authed={authed} onPick={onPick} onOpen={onOpen} />
       <section className="modules-info" aria-labelledby="modules-title">
         <h2 id="modules-title" className="sr-only">검증 항목</h2>
         {MODULE_INFO.map(([t, d]) => <div key={t} className="card mini"><h3>{t}</h3><p>{d}</p></div>)}

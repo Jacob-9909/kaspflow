@@ -40,6 +40,18 @@ class FakeDB(MemCache):
         r = self.saved.get(run_id)
         return None if r is None else {**r, "run_id": run_id}
 
+    watch: dict = {}
+
+    def list_watchlist(self):
+        return [{"symbol": k, "horizon": h, "added_at": datetime(2026, 11, 17, tzinfo=timezone.utc), "name": None,
+                 "last": None, "prev": None} for k, h in self.watch.items()]
+
+    def add_watch(self, symbol, horizon):
+        self.watch[symbol] = horizon
+
+    def remove_watch(self, symbol):
+        self.watch.pop(symbol, None)
+
 
 async def fake_run(symbol, horizon, position, cache, llm, loader=None):
     yield {"type": "step", "step": "data", "status": "running"}
@@ -129,6 +141,35 @@ class TestAPI(unittest.TestCase):
         self.assertIsNone(second["hit"])
         self.assertAlmostEqual(second["return"], 0.10, places=3)
         self.assertEqual(body["stats"]["evaluated"], 1)
+
+    def test_watchlist_requires_login_and_limit(self):
+        self.db.watch = {}
+        self.assertEqual(self.c.post("/watchlist", json={"symbol": "AAPL"}).status_code, 401)
+        self.login()
+        self.assertEqual(self.c.post("/watchlist", json={"symbol": "aapl", "horizon": "long"}).status_code, 200)
+        items = self.c.get("/watchlist").json()["items"]
+        self.assertEqual([(w["symbol"], w["horizon"]) for w in items], [("AAPL", "long")])
+        self.assertEqual(self.c.post("/watchlist", json={"symbol": "MSFT", "horizon": "week"}).status_code, 400)
+        for i in range(appmod.WATCH_MAX - 1):
+            self.db.add_watch(f"T{i}", "mid")
+        self.assertEqual(self.c.post("/watchlist", json={"symbol": "NVDA"}).status_code, 400)   # 최대 개수
+        self.assertEqual(self.c.post("/watchlist", json={"symbol": "AAPL", "horizon": "mid"}).status_code, 200)  # 이미 있는 종목은 바꾸기
+        self.assertEqual(self.c.delete("/watchlist/AAPL").status_code, 200)
+        self.assertNotIn("AAPL", self.db.watch)
+
+    def test_autorun_slots_and_due(self):
+        ny = appmod.NY
+        fri_eve = datetime(2026, 11, 20, 17, 0, tzinfo=ny)      # 금요일 장 마감 뒤
+        self.assertEqual(appmod._slot(fri_eve, -1), datetime(2026, 11, 20, 16, 40, tzinfo=ny))
+        self.assertEqual(appmod._slot(fri_eve, 1), datetime(2026, 11, 23, 16, 40, tzinfo=ny))   # 다음은 월요일
+        sun = datetime(2026, 11, 22, 12, 0, tzinfo=ny)
+        self.assertEqual(appmod._slot(sun, -1), datetime(2026, 11, 20, 16, 40, tzinfo=ny))     # 주말엔 금요일
+        mon_am = datetime(2026, 11, 23, 9, 0, tzinfo=ny)
+        self.assertEqual(appmod._slot(mon_am, -1), datetime(2026, 11, 20, 16, 40, tzinfo=ny))
+        old = {"symbol": "A", "last": {"created_at": datetime(2026, 11, 20, 12, 0, tzinfo=ny)}}
+        new = {"symbol": "B", "last": {"created_at": datetime(2026, 11, 20, 16, 50, tzinfo=ny)}}
+        none = {"symbol": "C", "last": None}
+        self.assertEqual([w["symbol"] for w in appmod.autorun_due([old, new, none], sun)], ["A", "C"])
 
     def test_judge(self):
         self.assertTrue(appmod.judge("buy", 0.03))
