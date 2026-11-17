@@ -127,4 +127,4 @@ def aggregate(items: list[dict], now: datetime | None = None) -> dict:
             "events": {EVENTS[k]: v for k, v in sorted(counts.items(), key=lambda kv: -kv[1])},
             "drivers": [{"title": d[0].get("title_ko") or d[0]["title"], "sentiment": d[0]["sentiment"],
                          "event": EVENTS[d[0]["event"]], "date": d[0]["published"][:10]} for d in drivers],
-            "summary": f"관련 기사 {len(rows)}건, 시간 가중 감성 {score:+.2f} ({tone}). 긍정 {pos}건 / 부정 {neg}건."}
+            "summary": f"관련 기사 {len(rows)}건 중 긍정 {pos}건, 부정 {neg}건. 최근 기사를 더 크게 반영한 감성 {score * 100:+.0f}({tone})"}

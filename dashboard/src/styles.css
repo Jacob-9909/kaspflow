@@ -188,6 +188,7 @@ li::marker { color: var(--text-faint); }
 .table tr.baseline th, .table tr.baseline td { color: var(--text-muted); border-top: 1px dashed var(--border-strong); }
 .table.compact th, .table.compact td { padding: var(--s2); }
 .table caption { text-align: left; color: var(--text-muted); font-size: var(--fs-label); padding: 0 var(--s2) var(--s2); }
+.table.text th, .table.text td { text-align: left; white-space: normal; } /* 글자 위주 표 */
 .table td.headline { white-space: normal; min-width: 220px; text-align: left; color: var(--text-muted); }
 .strat-name { font-weight: 600; } .origin { margin-top: var(--s1); color: var(--text-faint); font-size: var(--fs-caption); font-weight: 400; }
 .kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4) var(--s6); margin: 0; }
@@ -322,13 +323,19 @@ li::marker { color: var(--text-faint); }
 .horizon-seg button:hover { color: var(--text); }
 .horizon-seg button[aria-pressed="true"] { background: var(--raised); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .16); }
 .horizon-seg b { font-weight: 700; } .horizon-seg .num { color: var(--text-muted); font-weight: 500; }
-.horizon-seg .v-buy b { color: var(--up); } .horizon-seg .v-sell b { color: var(--down); } .horizon-seg .v-hold b { color: var(--hold); }
+/* 작은 굵은 글자라 판단 색을 글자색 쪽으로 15% 당겨 대비 4.5:1 을 맞춘다 */
+.horizon-seg .v-buy b { color: color-mix(in oklab, var(--up) 85%, var(--text)); } .horizon-seg .v-sell b { color: color-mix(in oklab, var(--down) 85%, var(--text)); }
+.horizon-seg .v-hold b { color: color-mix(in oklab, var(--hold) 85%, var(--text)); }
 .verdict-main { display: flex; justify-content: space-between; align-items: center; gap: var(--s6); flex-wrap: wrap; }
 .verdict-label { font-size: var(--fs-verdict); font-weight: 800; letter-spacing: -.035em; line-height: 1; color: var(--tone); margin: 0 0 var(--s5); }
 .verdict-stats { display: flex; flex-wrap: wrap; gap: var(--s3) var(--s7); margin: 0; }
 .verdict-stats div { display: flex; flex-direction: column; gap: 2px; }
 .verdict-stats dt { font-size: var(--fs-label); color: var(--text-muted); }
 .verdict-stats dd { margin: 0; font-size: var(--fs-stat); font-weight: 700; font-variant-numeric: tabular-nums; }
+.verdict-stats dd small { margin-left: var(--s2); font-size: var(--fs-label); font-weight: 600; color: var(--text-muted); }
+/* 판단 색으로 물든 바탕 위의 보조 글자는 회색 대신 그 색을 조금 섞는다 */
+.verdict .verdict-stats dt, .verdict .verdict-stats dd small, .verdict .advice-tag, .verdict .notes, .verdict .horizon-seg .num {
+  color: color-mix(in oklab, var(--tone) 18%, var(--text-muted)); }
 .gauge { width: 220px; max-width: 100%; flex: none; }
 .gauge path { fill: none; stroke-width: 14; stroke-linecap: butt; }
 .gauge .g-down { stroke: var(--down); } .gauge .g-hold { stroke: var(--hold); } .gauge .g-up { stroke: var(--up); }
@@ -344,20 +351,32 @@ li::marker { color: var(--text-faint); }
 .advice p { margin: 0; font-size: var(--fs-lead); font-weight: 600; }
 .notes { margin-top: var(--s4); color: var(--text-muted); font-size: var(--fs-label); max-width: 46em; }
 
-/* 모듈별 점수: 같은 축의 막대를 한 줄씩 놓아 모듈끼리 바로 비교한다 */
+/* 모듈별 점수: 같은 축의 막대를 한 줄씩 놓아 모듈끼리 바로 비교한다. 판단에 많이 반영된 모듈이 위.
+   등급 글자 대신 방향을 말로(매수 근거, 중립, 매도 근거) 붙이고, 점수와 반영은 머리줄로 구분한다 */
+.factor-help { max-width: 46em; margin: calc(-1 * var(--s2)) 0 var(--s5); }
+.factor-head, .factor-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px 48px 148px 16px; align-items: center; gap: var(--s4); }
+.factor-head { margin: 0 calc(-1 * var(--s2)); padding: 0 var(--s2) var(--s2); border-bottom: 1px solid var(--border);
+  font-size: var(--fs-caption); color: var(--text-muted); }
+.factor-head span:nth-child(2) { grid-column: 2 / 4; text-align: center; }
+.factor-head span:nth-child(3) { grid-column: 4 / 6; }
 .factor-list { list-style: none; margin: 0 calc(-1 * var(--s2)); padding: 0; }
 .factor-list li + li { border-top: 1px solid var(--border); }
-.factor-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) 128px 44px 150px 16px; align-items: center; gap: var(--s4); width: 100%;
-  margin: 0; padding: var(--s4) var(--s2); border: 0; border-radius: var(--r-md); background: none; color: inherit; text-align: left; cursor: pointer;
-  transition: background-color .15s var(--ease); }
+/* 요약 문장은 둘째 줄에 행 전체 폭으로 둔다 (좁은 칸에 가두면 태블릿 폭에서 잘린다) */
+.factor-row { grid-template-areas: "t b s m c" "d d d d c"; row-gap: var(--s1); width: 100%; margin: 0; padding: var(--s4) var(--s2); border: 0;
+  border-radius: var(--r-md); background: none; color: inherit; text-align: left; cursor: pointer; transition: background-color .15s var(--ease); }
+.factor-title { grid-area: t; } .factor-summary { grid-area: d; } .factor-bar { grid-area: b; } .factor-score { grid-area: s; }
+.factor-contrib { grid-area: m; } .factor-row .chev { grid-area: c; }
 .factor-row:hover { background: var(--surface-2); }
 .factor-row.off { opacity: .55; }
-.factor-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.factor-name b { font-size: var(--fs-body); font-weight: 600; }
-.factor-summary { font-size: var(--fs-label); color: var(--text-muted); line-height: 1.5; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.factor-title { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s1) var(--s2); min-width: 0; }
+.factor-title b { font-size: var(--fs-body); font-weight: 600; }
+.factor-title .tag { margin-left: 0; }
+.factor-summary { max-width: 52em; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.55; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .factor-score { font-size: var(--fs-lead); font-weight: 700; text-align: right; }
-.factor-meta { display: flex; flex-direction: column; font-size: var(--fs-caption); color: var(--text-faint); line-height: 1.55; font-variant-numeric: tabular-nums; }
-.factor-meta span { display: inline-flex; gap: var(--s2); }
+.factor-contrib { display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+.factor-contrib > .num { font-size: var(--fs-body); font-weight: 700; }
+.factor-contrib small { font-size: var(--fs-caption); color: var(--text-muted); line-height: 1.45; }
+.factor-k { display: none; }
 .factor-row .chev { color: var(--text-faint); transition: color .15s var(--ease), transform .15s var(--ease); }
 .factor-row:hover .chev { color: var(--text); transform: translateX(2px); }
 .grade { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-sm); font-weight: 800; font-size: var(--fs-label);
@@ -372,6 +391,11 @@ li::marker { color: var(--text-faint); }
 .scorebar .fill { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
 .scorebar .fill.up { background: var(--up); } .scorebar .fill.down { background: var(--down); }
 .scorebar.muted .fill { opacity: .35; }
+.grade-legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s6); margin: var(--s4) 0; }
+.grade-legend div { display: flex; align-items: center; gap: var(--s2); }
+.grade-legend dd { margin: 0; font-size: var(--fs-sm); }
+.grade-legend dd small { margin-left: var(--s2); color: var(--text-muted); font-size: var(--fs-label); }
+.plan-note { margin: calc(-1 * var(--s2)) 0 var(--s4); }
 
 /* 근거 */
 .reasons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s6) var(--s7); }
@@ -515,12 +539,15 @@ details summary:hover { color: var(--text); }
   .gauge { width: 168px; margin: 0 auto; }
   .narrative { margin-top: var(--s5); padding-top: var(--s5); }
   .narrative p { line-height: 1.75; }
+  .factor-head { display: none; }
   .factor-list { margin: 0; }
-  .factor-row { grid-template-columns: 28px minmax(0, 1fr) auto 16px; grid-template-areas: "g n s c" ". b b ." ". m m ."; row-gap: var(--s2); padding: var(--s3) 0; }
+  .factor-row { grid-template-columns: minmax(0, 1fr) auto 16px; grid-template-areas: "t t c" "d d d" "b s ." "m m ."; row-gap: var(--s2); padding: var(--s4) 0; }
   .factor-row:hover { background: none; }
-  .factor-row .grade { grid-area: g; align-self: start; } .factor-name { grid-area: n; } .factor-score { grid-area: s; align-self: start; }
-  .factor-row .chev { grid-area: c; align-self: start; margin-top: 4px; } .factor-bar { grid-area: b; }
-  .factor-meta { grid-area: m; flex-direction: row; flex-wrap: wrap; gap: 0 var(--s3); }
+  .factor-score { font-size: var(--fs-body); }
+  .factor-summary { -webkit-line-clamp: 3; }
+  .factor-row .chev { align-self: start; margin-top: 4px; }
+  .factor-contrib { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 var(--s3); }
+  .factor-k { display: inline; font-size: var(--fs-label); font-weight: 500; color: var(--text-muted); }
   .ff-row { grid-template-columns: 1fr; gap: var(--s1); }
   .ff-val { text-align: left; }
   .persona-grid { grid-template-columns: 1fr; }

@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel
@@ -69,7 +71,8 @@ def technical(df: pd.DataFrame, spy: pd.Series) -> dict:
         a = float(adx.iloc[-1]) if not pd.isna(adx.iloc[-1]) else 20.0
         t *= 1.2 if a > 25 else 0.7 if a < 15 else 1.0
         parts.append((0.35, clip(t)))
-        reasons.append(f"{'200일선 위' if above200 else '200일선 아래'}, {'골든크로스' if golden else '데드크로스'} 상태, ADX {a:.0f}")
+        strength = "추세 뚜렷" if a > 25 else "추세 약함" if a < 15 else "추세 보통"
+        reasons.append(f"{'200일선 위' if above200 else '200일선 아래'}, {'골든크로스' if golden else '데드크로스'}, {strength}(ADX {a:.0f})")
     r6, r12_1 = _ret(c, 126), (float(c.iloc[-22] / c.iloc[-253] - 1) if len(c) > 253 else None)
     moms = [x for x in (r6, r12_1) if x is not None]
     if moms:
@@ -87,16 +90,18 @@ def technical(df: pd.DataFrame, spy: pd.Series) -> dict:
         p20, o20 = c.iloc[-1] - c.iloc[-21], ob.iloc[-1] - ob.iloc[-21]
         parts.append((0.05, 0.25 if np.sign(p20) == np.sign(o20) and p20 > 0 else -0.25 if np.sign(p20) != np.sign(o20) else -0.1))
     score = sum(w * s for w, s in parts) / sum(w for w, _ in parts)
-    reasons.append(f"RSI14 {rv:.0f}, MACD 히스토그램 {'+' if hv > 0 else '-'}{'(확대)' if abs(hv) > abs(hp) else '(축소)'}")
+    # 요약은 사람이 읽는 말로: 기호(/, +, 확대) 대신 뜻을 쓴다. 이 문장은 화면과 AI 해설 양쪽에 들어간다
     if moms:
-        reasons.append(f"6개월 수익률 {r6:+.1%}" + (f", SPY 대비 {rel:+.1%}" if rel is not None else ""))
+        reasons.append(f"6개월 {r6:+.1%}" + (f"(S&P500보다 {rel * 100:+.1f}%p)" if rel is not None else ""))
+    rsi_word = "과열" if rv > 70 else "과매도" if rv < 30 else "보통"
+    reasons.append(f"RSI {rv:.0f}({rsi_word}), MACD {'상승' if hv > 0 else '하락'} 힘 {'커지는 중' if abs(hv) > abs(hp) else '줄어드는 중'}")
     tail = c.tail(252)
     levels = {k: (None if pd.isna(v) else round(float(v), 4)) for k, v in {
-        "SMA20": s20.iloc[-1], "SMA50": s50.iloc[-1], "SMA200": s200.iloc[-1], "볼린저 상단": bb_up.iloc[-1],
+        "20일선": s20.iloc[-1], "50일선": s50.iloc[-1], "200일선": s200.iloc[-1], "볼린저 상단": bb_up.iloc[-1],
         "볼린저 하단": bb_lo.iloc[-1], "20일 최고": h.tail(20).max(), "20일 최저": l.tail(20).min(),
         "52주 최고": tail.max(), "52주 최저": tail.min()}.items()}
     return {"available": True, "score": round(score, 3), "confidence": 0.9 if have200 else 0.6,
-            "summary": " / ".join(reasons), "levels": levels,
+            "summary": ", ".join(reasons), "levels": levels,
             "detail": {"above_50": bool(above50), "above_200": above200, "rsi14": round(rv, 1), "adx": None if pd.isna(adx.iloc[-1]) else round(float(adx.iloc[-1]), 1),
                        "ret_1m": _ret(c, 21), "ret_3m": _ret(c, 63), "ret_6m": r6, "ret_12m": _ret(c, 252),
                        "rel_strength_6m": rel, "macd_hist": round(hv, 4)}}
@@ -122,13 +127,13 @@ def regime(spy: pd.Series, vix: pd.Series, tnx: pd.Series, sector: pd.Series | N
         s += 0.25 if sec_above else -0.25
     b = 1.0 if beta is None else max(0.6, min(1.4, beta))
     score = clip(clip(s) * b)
-    bits = [f"SPY {'200일선 위' if above else '200일선 아래'} (3개월 {spy3:+.1%})"]
+    bits = [f"S&P500 {'200일선 위' if above else '200일선 아래'}(3개월 {spy3:+.1%})"]
     if v is not None:
-        bits.append(f"VIX {v:.1f}")
+        bits.append(f"VIX {v:.1f}({'안정' if v < 18 else '보통' if v < 25 else '높음' if v < 32 else '매우 높음'})")
     if dt is not None:
-        bits.append(f"10년물 3개월 변화 {dt:+.2f}%p")
+        bits.append(f"10년 금리 3개월간 {dt:+.2f}%p")
     if sec_above is not None:
-        bits.append(f"섹터 {sector_sym} {'200일선 위' if sec_above else '200일선 아래'}")
+        bits.append(f"업종 {sector_sym} {'200일선 위' if sec_above else '200일선 아래'}")
     return {"available": True, "score": round(score, 3), "confidence": 0.8, "summary": ", ".join(bits),
             "detail": {"spy_above_200": above, "spy_ret_3m": round(spy3, 4), "vix": v, "tnx_change_3m": dt,
                        "sector_etf": sector_sym, "sector_above_200": sec_above, "beta_used": round(b, 2)}}
@@ -168,18 +173,18 @@ def advice(v: dict, position: dict | None, price: float, plan: dict) -> dict:
     pnl = (price / position["avg_price"] - 1) if holding and position.get("avg_price") else None
     stop, target = plan["stop"], plan["target"]
     if v["verdict"] == "buy":
-        text = (f"보유 유지. 추가 매수는 계좌 대비 {plan['max_weight']:.0%} 비중 안에서." if holding
-                else f"매수 고려. 진입 ${plan['entry']:,.2f}, 손절 ${stop:,.2f} ({plan['stop_pct']:+.1%}), "
-                     f"목표 ${target:,.2f} ({plan['target_pct']:+.1%}). 1회 손실을 계좌의 1%로 묶으면 비중 최대 {plan['max_weight']:.0%}.")
+        text = (f"계속 보유하세요. 더 산다면 계좌의 {plan['max_weight']:.0%} 안에서 사세요." if holding
+                else f"매수를 고려할 만합니다. 진입 ${plan['entry']:,.2f}, 손절 ${stop:,.2f}({plan['stop_pct']:+.1%}), "
+                     f"목표 ${target:,.2f}({plan['target_pct']:+.1%}). 한 번에 잃는 돈을 계좌의 1%로 제한하면 최대 비중은 {plan['max_weight']:.0%}입니다.")
     elif v["verdict"] == "sell":
         if holding:
-            text = ("비중 축소·매도 고려. " + (f"평가이익 {pnl:+.1%} 구간이라 일부 이익 실현이 선택지입니다." if pnl and pnl > 0
-                                          else f"평가손익 {pnl:+.1%}. 손절 기준을 다시 확인하세요." if pnl is not None else ""))
+            text = ("비중을 줄이거나 파는 것을 고려하세요. " + (f"평가이익이 {pnl:+.1%}라 일부 이익을 실현하는 방법도 있습니다." if pnl and pnl > 0
+                                                     else f"평가손익은 {pnl:+.1%}입니다. 손절 기준을 다시 확인하세요." if pnl is not None else ""))
         else:
-            text = "신규 매수 비추천. 보유 중이라면 매도 쪽 신호입니다."
+            text = "새로 사지 않는 편이 낫습니다. 보유 중이라면 매도 쪽 신호입니다."
     else:
-        text = (f"보유 유지. 종가가 ${stop:,.2f} 아래로 내려가면 정리 기준으로 삼으세요." if holding
-                else "관망. 아래 '판단이 바뀌는 조건'이 나올 때까지 기다리세요.")
+        text = (f"계속 보유하되, 종가가 ${stop:,.2f} 아래로 내려가면 정리를 고려하세요." if holding
+                else "지금은 사지 말고 지켜보세요. 아래 '판단이 바뀌는 조건'이 나오면 다시 판단합니다.")
     return {"holding": holding, "pnl": None if pnl is None else round(pnl, 4), "text": text}
 
 
@@ -192,40 +197,107 @@ class Narrative(BaseModel):
     triggers: list[str]
 
 
-CIO_SYSTEM = ("너는 투자위원회 위원장이다. 계량 엔진이 이미 정한 판단을 사람에게 설명한다. 판단을 바꾸지 않고, "
-              "주어진 숫자와 문장만 근거로 쓴다. 담백한 한국어로, 과장·확신·투자 권유 표현 없이 쓴다.")
+CIO_SYSTEM = """너는 투자위원회 위원장이다. 계량 엔진이 이미 정한 판단을 개인 투자자에게 설명한다.
+판단을 바꾸지 않고, 주어진 숫자와 문장만 근거로 쓴다. 과장, 확신, 투자 권유 표현은 쓰지 않는다.
+
+[문체]
+- 담백한 한국어. 문장 끝맺음은 항목마다 다르다.
+  headline: 명사형 한 줄. 예) '실적은 탄탄하지만 주가가 적정가의 2배'
+  summary: 모든 문장을 '-습니다', '-입니다' 로 끝낸다. 예) '영업이익률이 32%로 업종 평균보다 높습니다.'
+  bull, bear, risks, triggers 항목: '-음', '-함' 이나 명사로 끝나는 짧은 구. '-습니다' 로 끝내지 않는다.
+    예) '영업이익률 32%로 업종 상위', '부채가 적어 금리 부담이 작음', '종가가 50일선 $95 아래로 내려가면 매도 쪽으로 바뀜'
+- 한 문장에 한 가지 뜻만 담고 60자 안팎으로 끊는다.
+- 번역투를 쓰지 않는다: '~에 대해', '~에 있어', '~를 통해', '~로 인한', '~에 의해', '가지고 있다', '상회/하회' 대신 '넘다/밑돌다'.
+- 상투구를 쓰지 않는다: '신중한 접근이 필요', '주목할 필요', '~할 것으로 보입니다', '양호한 모습', '상충', '시사'.
+- 기호와 영어 단어를 풀어 쓴다: 'vs' 는 '~와 비교하면', '/' 는 쉼표, 'buy' 는 '매수'. RSI, MACD, PER, PBR, ADX, VIX, S&P500 같은 지표 이름은 그대로 쓴다.
+
+[숫자]
+- 숫자는 주어진 값과 표기를 그대로 옮긴다. 금액은 '$164.34' 처럼 쓰고 '달러' 로 바꾸지 않는다. 퍼센트의 기준과 방향을 바꾸지 않는다.
+  예: '현재가가 적정가의 2.1배' 를 '현재가가 적정가보다 53% 높다' 나 '96% 높다' 로 바꾸면 틀린다. 배수는 배수로, 상승 여력은 상승 여력으로 쓴다.
+- 배수는 '현재가가 적정가의 2.1배' 형태로만 쓴다. '~보다 2.1배 높다' 는 뜻이 모호해 쓰지 않는다.
+- 점수는 -100(매도 쪽)~+100(매수 쪽) 척도다."""
 
 
-def cio_prompt(symbol: str, name: str, price: float, verdicts: dict, selected: str, modules: dict, levels: dict,
-               plan: dict, personas: dict, news_drivers: list, risk: dict) -> str:
+HORIZON_KO = {"short": "단기 1개월", "mid": "중기 3개월", "long": "장기 1년"}
+
+
+def cio_prompt(symbol: str, name: str, price: float, verdicts: dict, horizon: str, modules: dict, levels: dict,
+               plan: dict, personas: dict, news_drivers: list, risk: dict, position: dict | None = None) -> str:
+    holding = bool(position and (position.get("qty") or 0) > 0)
+    sel = verdicts[horizon]
     lines = [f"종목 {symbol} ({name}), 현재가 ${price:,.2f}",
-             "기간별 판단: " + ", ".join(f"{k}={v['label']}(점수 {v['score']:+.2f}, 신뢰도 {v['confidence']:.0%})" for k, v in verdicts.items()),
-             f"설명할 기간: {selected}", "", "[모듈별 결과]"]
+             f"설명할 판단: {HORIZON_KO[horizon]} '{sel['label']}' (종합 점수 {sel['score'] * 100:+.0f}, 신뢰도 {sel['confidence']:.0%})",
+             "다른 기간 판단(참고만, 설명에 섞지 않는다): " + ", ".join(
+                 f"{HORIZON_KO[k]} '{v['label']}'({v['score'] * 100:+.0f})" for k, v in verdicts.items() if k != horizon),
+             "보유 여부: " + (f"보유 중 (평균 단가 ${position['avg_price']:,.2f})" if holding and position.get("avg_price") else "보유 중" if holding else "보유하지 않음"),
+             "", "[모듈별 결과]"]
     for k, m in modules.items():
         if m.get("available"):
-            lines.append(f"- {MODULES.get(k, k)}: 점수 {m['score']:+.2f}, 신뢰도 {m['confidence']:.0%}. {m.get('summary', '')}")
+            lines.append(f"- {MODULES.get(k, k)}: 점수 {m['score'] * 100:+.0f}, 신뢰도 {m['confidence']:.0%}. {m.get('summary', '')}")
+    val = modules.get("valuation") or {}
+    if val.get("available") and val.get("fair_value"):
+        fair = val["fair_value"]
+        lines.append(f"- 적정가 비교: 추정 적정가 ${fair:,.2f}, " + (f"상승 여력 {fair / price - 1:+.0%}" if fair >= price
+                     else f"현재가가 적정가의 {price / fair:.1f}배"))
     lines += ["", "[주요 가격대] " + ", ".join(f"{k} ${v:,.2f}" for k, v in levels.items() if v),
-              f"[매매 계획] 손절 ${plan['stop']:,.2f}, 목표 ${plan['target']:,.2f}, 목표 먼저 도달 {plan['p_target_first']:.0%}, 손절 먼저 {plan['p_stop_first']:.0%}",
-              f"[리스크] 연 변동성 {risk['vol_1y']:.0%}, 1년 최대 낙폭 {risk['mdd_1y']:.0%}, 베타 {risk.get('beta')}"]
+              f"[매매 계획] 손절가 ${plan['stop']:,.2f}, 목표가 ${plan['target']:,.2f}. 기간 안에 목표가에 먼저 닿을 확률 {plan['p_target_first']:.0%}, "
+              f"손절가에 먼저 닿을 확률 {plan['p_stop_first']:.0%}",
+              f"[리스크] 연 변동성 {risk['vol_1y']:.0%}, 1년 최대 낙폭 {risk['mdd_1y']:.0%}, 베타 {'-' if risk.get('beta') is None else f"{risk['beta']:.2f}"}"]
     for p in (personas.get("members") or {}).values():
         if p.get("view"):
             lines.append(f"[{p['name']}] {p['view']['signal']} {p['view']['confidence']}: {p['view']['thesis']}")
     for d in news_drivers[:5]:
-        lines.append(f"[뉴스 {d['date']}] ({d['sentiment']:+.1f}) {d['title']}")
+        lines.append(f"[뉴스 {d['date']}] (감성 {d['sentiment'] * 100:+.0f}) {d['title']}")
     lines += ["", "작성할 것:",
-              "- headline: 판단을 요약한 한 줄 (40자 이내)",
-              "- summary: 3~4문장. 왜 이 판단인지, 가장 큰 근거 두세 개를 숫자와 함께",
-              "- bull: 매수 쪽 근거 3개 이내, bear: 매도 쪽 근거 3개 이내",
-              "- risks: 판단을 틀리게 만들 수 있는 위험 3개 이내",
-              "- triggers: 판단이 바뀌는 조건 3개 이내. 가능하면 위 가격대 숫자를 써서 (예: 종가가 SMA200 $X 아래로 내려가면)"]
+              "- headline: 판단의 핵심 이유를 담은 한 줄, 30자 안팎. '매수', '관망', '매도' 같은 판단 이름과 기간은 화면에 따로 있으니 넣지 않는다.",
+              "- summary: 3문장. 첫째 판단을 이끈 가장 큰 근거, 둘째 반대쪽의 가장 큰 근거, 셋째 앞으로 지켜볼 점.",
+              "  설명할 판단은 위의 하나뿐이다. '매도 판단이 섭니다' 처럼 다른 판단을 쓰지 않는다.",
+              "  판단은 화면에 크게 나오므로 '중기 판단은 관망입니다' 같은 문장은 쓰지 않는다. '-85점' 같은 모듈 점수 대신 그 점수를 만든 사실(적정가, 수익률 등)을 쓴다.",
+              "- bull: 매수 쪽 근거 3개 이내, bear: 매도 쪽 근거 3개 이내. 한 항목에 근거 하나, 40자 안팎.",
+              "- risks: 판단을 틀리게 만들 수 있는 위험 3개 이내.",
+              "- triggers: 판단이 바뀌는 조건 3개 이내. 위 가격대 숫자를 쓴다(예: 종가가 200일선 $X 아래로 내려가면 매도 쪽으로).",
+              "  보유하지 않았다면 '매수를 검토할 조건' 과 '판단이 매도로 바뀌는 조건' 을 쓰고, 손절이나 익절을 '실행' 하라고 쓰지 않는다.",
+              "  보유 중이라면 '정리를 고려할 조건' 과 '더 살 수 있는 조건' 을 쓴다."]
     return "\n".join(lines)
+
+
+_VERDICT_TALK = re.compile(r"(매수|관망|매도)\s*(판단|의견|결론|신호가 우세)")
+
+
+def tidy_summary(text: str, label: str) -> str:
+    """요약에서 설명할 판단과 다른 판단을 말하는 문장을 뺀다. LLM 이 다른 기간의 판단을 섞어 쓰는 일이 있다
+    (예: 단기 관망인데 장기 판단을 따라 '매도 판단이 섭니다'). 다 빠지면 원문을 둔다."""
+    own = label.replace("강한 ", "")
+    sents = [x for x in re.split(r"(?<=[.!?])\s+", text.strip()) if x]
+    keep = [x for x in sents if all(m.group(1) == own for m in _VERDICT_TALK.finditer(x))]
+    return " ".join(keep) if keep else text
+
+
+def noun_end(s: str) -> str:
+    """제목과 목록 항목을 '-음/-함' 끝맺음으로 맞춘다. AI 가 실행마다 '-습니다' 와 '-음' 을 섞어 쓴다.
+    '높습니다' -> '높음', 받침 ㅂ + '니다' -> 받침 ㅁ ('보입니다' -> '보임', '큽니다' -> '큼', '상태입니다' -> '상태임')."""
+    s = s.strip().rstrip(".")
+    if s.endswith("습니다"):
+        return s[:-3] + "음"
+    if len(s) > 2 and s.endswith("니다"):
+        ch = ord(s[-3]) - 0xAC00
+        if 0 <= ch < 11172 and ch % 28 == 17:  # 한글 음절의 받침 번호: ㅂ 17, ㅁ 16
+            return s[:-3] + chr(0xAC00 + ch - 1)
+    return s
+
+
+def tidy_narrative(n: dict, label: str) -> dict:
+    out = {k: [noun_end(x) for x in v] if isinstance(v, list) else v for k, v in n.items()}
+    out["headline"] = noun_end(out.get("headline", ""))
+    out["summary"] = tidy_summary(out.get("summary", ""), label)
+    return out
 
 
 def fallback_narrative(v: dict, modules: dict, plan: dict) -> dict:
     ranked = sorted(((k, m) for k, m in modules.items() if m.get("available")), key=lambda kv: kv[1]["score"] * kv[1]["confidence"])
     bear = [f"{MODULES[k]}: {m['summary']}" for k, m in ranked if m["score"] < -0.1][:3]
     bull = [f"{MODULES[k]}: {m['summary']}" for k, m in reversed(ranked) if m["score"] > 0.1][:3]
-    return {"headline": f"{v['label']} (점수 {v['score']:+.2f})",
-            "summary": "AI 해설을 만들지 못해 계량 결과만 보여 줍니다. 모듈별 점수와 근거를 확인하세요.",
+    return {"headline": "계량 결과만으로 정리한 판단",
+            "summary": f"AI 해설을 만들지 못했습니다. 종합 점수 {v['score'] * 100:+.0f}로 {v['label']} 구간입니다. 아래 모듈별 점수와 근거를 확인하세요.",
             "bull": bull, "bear": bear, "risks": v.get("notes", [])[:3],
-            "triggers": [f"종가가 손절가 ${plan['stop']:,.2f} 아래로 내려가면 재평가", f"종가가 목표가 ${plan['target']:,.2f} 를 넘으면 재평가"]}
+            "triggers": [f"종가가 손절가 ${plan['stop']:,.2f} 아래로 내려가면 다시 판단", f"종가가 목표가 ${plan['target']:,.2f}를 넘으면 다시 판단"]}

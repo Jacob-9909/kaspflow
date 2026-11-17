@@ -111,7 +111,7 @@ def _rsi_zone(r: float) -> int:
     return 0 if r < 30 else (2 if r > 70 else 1)
 
 
-ZONE_LABEL = {0: "RSI 과매도(<30)", 1: "RSI 중립(30~70)", 2: "RSI 과매수(>70)"}
+ZONE_LABEL = {0: "RSI 30 미만", 1: "RSI 30~70", 2: "RSI 70 초과"}
 
 
 def analogs(df: pd.DataFrame, horizon: str, ppy: int = 252) -> dict:
@@ -126,8 +126,8 @@ def analogs(df: pd.DataFrame, horizon: str, ppy: int = 252) -> dict:
     if valid.sum() < 250 or pd.isna(state.iloc[-1]):
         return {"available": False, "score": 0.0, "confidence": 0.0, "summary": "유사 국면을 비교할 기록이 부족합니다."}
     cur = int(state.iloc[-1])
-    desc = " · ".join([("200일선 위" if cur // 100 else "200일선 아래"),
-                       ("3개월 모멘텀 +" if (cur // 10) % 10 else "3개월 모멘텀 -"), ZONE_LABEL[cur % 10]])
+    desc = ", ".join([("200일선 위" if cur // 100 else "200일선 아래"),
+                      ("3개월 상승" if (cur // 10) % 10 else "3개월 하락"), ZONE_LABEL[cur % 10]])
     same = valid & (state == cur)
     n = int(same.sum())
     all_f = fwd[valid]
@@ -147,8 +147,8 @@ def analogs(df: pd.DataFrame, horizon: str, ppy: int = 252) -> dict:
         "t_stat": round(t, 2), "score": round(float(np.clip(t / 3, -1, 1)), 3),
         "confidence": round(min(1.0, n_eff / 10), 3),
         "hist": {"counts": hist.tolist(), "edges": edges.round(3).tolist()},
-        "summary": (f"과거 같은 국면({desc}) {n}일의 {h}거래일 뒤 평균 수익 {f.mean():+.1%} "
-                    f"(상승 확률 {(f > 0).mean():.0%}), 전체 평균은 {all_f.mean():+.1%}."),
+        "summary": (f"지금과 같은 국면({desc})이던 과거 {n:,}일, {h}거래일 뒤 평균 {f.mean():+.1%}(오른 비율 {(f > 0).mean():.0%}). "
+                    f"전체 평균 {all_f.mean():+.1%}보다 {'높음' if f.mean() > all_f.mean() else '낮음'}"),
     }
 
 

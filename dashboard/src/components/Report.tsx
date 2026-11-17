@@ -1,6 +1,6 @@
-/** 결과 요약부: 판단 히어로, 모듈 등급 카드(누르면 해당 탭), 근거, 매매 계획 요약, 몬테카를로, 리스크·추세. */
+/** 결과 요약부: 판단 히어로, 모듈별 점수(누르면 해당 탭), 근거, 매매 계획 요약, 몬테카를로, 리스크·추세. */
 import type { Horizon, Result } from "../api";
-import { HORIZON_LABEL, HORIZON_SHORT, HORIZONS, dirClass, num, pct, signed, usd } from "../format";
+import { HORIZON_LABEL, HORIZON_SHORT, HORIZONS, agreementWord, dirClass, num, pct, signed, stance, usd } from "../format";
 import { FanChart, Gauge, ScoreBar } from "./Charts";
 import { Term } from "./Glossary";
 import { Chevron } from "./ui";
@@ -27,9 +27,9 @@ export function VerdictHero({ r, horizon, onHorizon }: { r: Result; horizon: Hor
             <span className="sr-only">{HORIZON_LABEL[horizon]} 판단 </span>{v.strong ? "강한 " : ""}{v.label}
           </h2>
           <dl className="verdict-stats">
-            <div><dt>종합 점수</dt><dd className="num">{signed(v.score * 100, 0)}</dd></div>
+            <div><dt><Term k="종합 점수" /></dt><dd className="num">{signed(v.score * 100, 0)}</dd></div>
             <div><dt><Term k="신뢰도" /></dt><dd className="num">{pct(v.confidence, 0, false)}</dd></div>
-            <div><dt>근거 <Term k="일치도" /></dt><dd className="num">{pct(v.agreement, 0, false)}</dd></div>
+            <div><dt>근거 <Term k="일치도" /></dt><dd><span className="num">{pct(v.agreement, 0, false)}</span><small>{agreementWord(v.agreement)}</small></dd></div>
           </dl>
         </div>
         <Gauge score={v.score} label={v.label} />
@@ -55,26 +55,31 @@ export const MODULE_TAB: Record<string, string> = {
 
 export function FactorGrid({ r, horizon, onOpen }: { r: Result; horizon: Horizon; onOpen: (tab: string) => void }) {
   const v = r.verdicts[horizon];
+  // 판단에 많이 반영된 모듈부터 (엔진이 contributions 를 |반영| 큰 순으로 준다). 판단에서 빠진 모듈은 맨 뒤
+  const order = Object.keys(v.contributions);
+  const rank = (key: string) => (order.includes(key) ? order.indexOf(key) : order.length);
+  const mods = [...r.modules].sort((a, b) => rank(a.key) - rank(b.key));
   return (
     <section className="card" aria-labelledby="factor-title">
-      <div className="panel-head">
-        <h2 id="factor-title">모듈별 점수</h2>
-        <p className="hint">-100 매도부터 +100 매수까지. 가중치는 {HORIZON_LABEL[horizon]} 기준</p>
-      </div>
+      <h2 id="factor-title">모듈별 점수</h2>
+      <p className="hint factor-help">점수는 모듈마다 -100(매도 쪽)부터 +100(매수 쪽)까지입니다. 반영은 점수에 {HORIZON_LABEL[horizon]} 가중치와 신뢰도를 곱한 값으로,
+        모두 더하면 종합 점수 {signed(v.score * 100, 0)}입니다. 판단에 많이 반영된 순서로 놓았습니다.</p>
+      <div className="factor-head" aria-hidden="true"><span>모듈</span><span>점수</span><span>반영</span></div>
       <ul className="factor-list">
-        {r.modules.map((m) => {
+        {mods.map((m) => {
           const contrib = v.contributions[m.key];
+          const st = stance(m.score, m.available);
           return (
             <li key={m.key}>
               <button type="button" className={`factor-row${m.available ? "" : " off"}`} onClick={() => onOpen(MODULE_TAB[m.key] ?? "summary")}
-                      aria-label={`${m.label} 등급 ${m.grade}, 점수 ${m.available ? signed(m.score * 100, 0) : "없음"}. 자세히 보기`}>
-                <span className={`grade g-${m.grade.replace("-", "na")}`} aria-hidden="true">{m.grade}</span>
-                <span className="factor-name"><b>{m.label}</b><span className="factor-summary">{m.summary}</span></span>
+                      aria-label={`${m.label}: ${st.label}, 점수 ${m.available ? signed(m.score * 100, 0) : "없음"}, 반영 ${contrib === undefined ? "없음" : signed(contrib * 100, 1)}. 자세히 보기`}>
+                <span className="factor-title"><b>{m.label}</b><span className={`tag ${st.cls}`}>{st.label}</span></span>
+                <span className="factor-summary">{m.summary}</span>
                 <span className="factor-bar"><ScoreBar score={m.score} muted={!m.available} /></span>
-                <span className={`num factor-score ${dirClass(m.score)}`}>{m.available ? signed(m.score * 100, 0) : "-"}</span>
-                <span className="factor-meta">
-                  <span className={dirClass(contrib)}>기여 {contrib === undefined ? "-" : signed(contrib * 100, 1)}</span>
-                  <span><span>가중치 {pct(v.weights[m.key] ?? 0, 0, false)}</span><span>신뢰도 {m.available ? pct(m.confidence, 0, false) : "-"}</span></span>
+                <span className={`num factor-score ${dirClass(m.score)}`}><span className="factor-k">점수 </span>{m.available ? signed(m.score * 100, 0) : "-"}</span>
+                <span className="factor-contrib">
+                  <span className={`num ${dirClass(contrib, 0.0005)}`}><span className="factor-k">반영 </span>{contrib === undefined ? "-" : signed(contrib * 100, 1)}</span>
+                  <small>가중치 {pct(v.weights[m.key] ?? 0, 0, false)} × 신뢰도 {m.available ? pct(m.confidence, 0, false) : "-"}</small>
                 </span>
                 <Chevron />
               </button>
@@ -100,7 +105,9 @@ export function Reasons({ r }: { r: Result }) {
       {col("매도 근거", n.bear, "r-down")}
       {col("주의할 위험", n.risks, "r-warn")}
       {col("판단이 바뀌는 조건", n.triggers, "r-accent")}
-      <p className="hint wide">해설: {r.meta.llm_model ?? "LLM 없음"}{r.meta.narrative_error ? ` (실패해 계량 결과로 대신함: ${r.meta.narrative_error})` : ""}. 판단 자체는 계량 엔진이 정하고 해설은 바꾸지 못합니다.</p>
+      <p className="hint wide">
+        {r.meta.narrative_error ? `AI 해설을 만들지 못해 계량 결과로 대신했습니다 (${r.meta.narrative_error}).` : `해설은 AI(${(r.meta.llm_model ?? "").split("/").pop()})가 썼습니다.`}
+        {" "}판단은 계량 엔진이 정하고, 해설은 판단을 바꾸지 못합니다.</p>
     </section>
   );
 }
@@ -109,19 +116,23 @@ export function Reasons({ r }: { r: Result }) {
 export function PlanSummary({ r, horizon, onOpen }: { r: Result; horizon: Horizon; onOpen: () => void }) {
   const p = r.simulation.plans[horizon];
   const s = r.simulation.summary[horizon];
+  const v = r.verdicts[horizon];
+  // 관망·매도인데 보유하지 않았다면, 이 계획은 '그래도 산다면' 의 기준이다 (바로 사라는 뜻으로 읽히지 않게)
+  const ifBuying = v.verdict !== "buy" && !r.advice.holding;
   return (
     <section className="card plan-summary" aria-labelledby="plan-sum-title">
       <div className="panel-head">
         <h2 id="plan-sum-title">매매 계획 <span className="sub">{HORIZON_LABEL[horizon]}</span></h2>
         <button className="btn outline" onClick={onOpen}>시뮬레이션 자세히<Chevron /></button>
       </div>
+      {ifBuying && <p className="hint plan-note">지금은 {v.label} 구간입니다. 아래는 그래도 산다면 쓸 기준입니다.</p>}
       <dl className="stat-row">
-        <div><dt>진입</dt><dd className="num">{usd(p.entry)}</dd></div>
-        <div><dt>손절</dt><dd className="num down">{usd(p.stop)}<small>{pct(p.stop_pct)}</small></dd></div>
-        <div><dt>목표</dt><dd className="num up">{usd(p.target)}<small>{pct(p.target_pct)}</small></dd></div>
-        <div><dt>목표 먼저 / 손절 먼저</dt><dd className="num">{pct(p.p_target_first, 0, false)} / {pct(p.p_stop_first, 0, false)}</dd></div>
-        <div><dt>{HORIZON_SHORT[horizon]} 뒤 90% 범위</dt><dd className="num">{pct(s.p5, 0)} ~ {pct(s.p95, 0)}</dd></div>
-        <div><dt>최대 비중</dt><dd className="num">{pct(p.max_weight, 0, false)}</dd></div>
+        <div><dt>진입가</dt><dd className="num">{usd(p.entry)}</dd></div>
+        <div><dt>손절가</dt><dd className="num down">{usd(p.stop)}<small>{pct(p.stop_pct)}</small></dd></div>
+        <div><dt>목표가</dt><dd className="num up">{usd(p.target)}<small>{pct(p.target_pct)}</small></dd></div>
+        <div><dt>목표가 먼저 도달</dt><dd className="num">{pct(p.p_target_first, 0, false)}</dd></div>
+        <div><dt>손절가 먼저 도달</dt><dd className="num">{pct(p.p_stop_first, 0, false)}</dd></div>
+        <div><dt>{HORIZON_SHORT[horizon]} 뒤 예상 범위</dt><dd className="num">{pct(s.p5, 0)} ~ {pct(s.p95, 0)}<small>시나리오 90%</small></dd></div>
       </dl>
     </section>
   );

@@ -180,4 +180,4 @@ async def panel(symbol: str, name: str, summary: str, facts: dict, checks: dict[
     bears = [r["name"] for r in results.values() if (r["score"] or 0) < -0.2]
     return {"available": True, "score": round(score, 3), "confidence": round(min(1.0, len(scored) / 6), 3),
             "members": results,
-            "summary": f"{len(scored)}명 평균 {score:+.2f}. 긍정: {', '.join(bulls) or '없음'} / 부정: {', '.join(bears) or '없음'}"}
+            "summary": f"{len(scored)}명 평균 {score * 100:+.0f}점. 긍정적: {', '.join(bulls) or '없음'}. 부정적: {', '.join(bears) or '없음'}"}

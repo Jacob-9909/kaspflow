@@ -18,7 +18,7 @@ import Search, { rememberSymbol } from "./components/Search";
 import { Analogs, Fundamentals, News, Personas, Strategies, Valuation } from "./components/Sections";
 import { TabBar, type TabDef } from "./components/Tabs";
 import { MetaList } from "./components/ui";
-import { big, date, dateTime, dirClass, pct, usd } from "./format";
+import { SECTOR_KO, big, date, dateTime, dirClass, pct, usd } from "./format";
 
 type View = "home" | "symbol" | "history" | "method";
 type Route = { view: View; symbol?: string; run?: string; tab?: string };
@@ -257,7 +257,7 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
         <header className="sym-head">
           <div className="sym-title">
             <h1>{head.name} <span className="ticker">{head.symbol}</span></h1>
-            <p className="sym-meta"><MetaList items={[head.exchange, head.sector, head.industry, `시가총액 ${big(head.cap)}`, `기준일 ${head.asOf}`]} /></p>
+            <p className="sym-meta"><MetaList items={[head.exchange, head.sector && (SECTOR_KO[head.sector] ?? head.sector), head.industry, `시가총액 ${big(head.cap)}`, `기준일 ${head.asOf}`]} /></p>
           </div>
           <div className="price-block">
             <span className="price num">{usd(head.price)}</span>
@@ -301,7 +301,7 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
                   <PlanSummary r={result} horizon={horizon} onOpen={() => onTab("simulation")} />
                   <FactorGrid r={result} horizon={horizon} onOpen={onTab} />
                   <Reasons r={result} />
-                  <p className="disclaimer">{result.meta.disclaimer} 데이터 기준 {date(result.as_of)}.</p>
+                  <p className="disclaimer">데이터 기준 {date(result.as_of)}. 매매 판단과 책임은 본인에게 있습니다.</p>
                 </div>
               ) : (
                 <div className="stack">
@@ -318,7 +318,7 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
             <div className="stack">
               <section className="card chart-card" aria-label="가격 차트">
                 <div className="chart-legend">
-                  <span className="lg sma50">SMA50</span><span className="lg sma200">SMA200</span>
+                  <span className="lg sma50">50일선</span><span className="lg sma200">200일선</span>
                   {result && <span className="lg lv">손절·목표 ({horizon === "short" ? "단기" : horizon === "mid" ? "중기" : "장기"})</span>}
                   {result && (
                     <label className="marker-pick">매매 화살표
