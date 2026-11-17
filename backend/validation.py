@@ -266,10 +266,14 @@ def strategy_score(v: dict) -> dict:
     conf = min(1.0, wsum / 2.0)
     longs = [s["label"] for s in used if s["current"]["vote"] > 0]
     shorts = [s["label"] for s in used if s["current"]["vote"] < 0]
-    parts = []
-    if longs:
-        parts.append("보유 신호: " + ", ".join(longs))
-    if shorts:
-        parts.append("현금 신호: " + ", ".join(shorts))
-    return {"score": round(score, 3), "confidence": round(conf, 3),
-            "summary": f"검증 통과 {len(used)}개 전략의 가중 투표. " + " / ".join(parts)}
+    n = len(used)
+    if len(longs) == n:
+        summary = f"검증을 통과한 전략 {n}개 모두 지금 '보유' 신호({', '.join(longs)})"
+    elif len(shorts) == n:
+        summary = f"검증을 통과한 전략 {n}개 모두 지금 '현금' 신호({', '.join(shorts)})"
+    else:
+        parts = [f"'보유' 신호 {len(longs)}개({', '.join(longs)})" if longs else "",
+                 f"'현금' 신호 {len(shorts)}개({', '.join(shorts)})" if shorts else "",
+                 f"신호 없음 {n - len(longs) - len(shorts)}개" if n > len(longs) + len(shorts) else ""]
+        summary = f"검증을 통과한 전략 {n}개 중 " + ", ".join(p for p in parts if p)
+    return {"score": round(score, 3), "confidence": round(conf, 3), "summary": summary}

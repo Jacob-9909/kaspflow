@@ -6,7 +6,7 @@ import Search from "./Search";
 
 const POPULAR = ["NVDA", "AAPL", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "AMD", "PLTR", "SPY", "QQQ", "BTC-USD"];
 const MODULE_INFO: [string, string][] = [
-  ["기술적 지표", "추세(SMA50/200, ADX), 모멘텀, 상대강도, RSI, MACD"],
+  ["기술적 지표", "추세(50일선, 200일선, ADX), 모멘텀, 상대강도, RSI, MACD"],
   ["검증된 전략 신호", "11개 전략 30개 변형을 워크포워드, 순열 검정, DSR 로 검증하고 통과한 것만 투표"],
   ["과거 유사 국면", "지금과 같은 추세, 모멘텀, RSI 구간이었던 날들의 이후 수익률"],
   ["몬테카를로", "2,000개 가격 경로로 범위, 손절과 목표 도달 확률, 비중"],

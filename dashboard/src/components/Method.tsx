@@ -1,9 +1,10 @@
 /** 검증 방법 페이지: 판단이 어떻게 나오는지 한 화면에서 설명한다 (docs/methodology.md 의 요약). */
+import { GRADE_INFO } from "../format";
 import { GLOSSARY } from "./Glossary";
 
 const STEPS: [string, string][] = [
-  ["데이터 수집", "10년 일봉(배당과 분할 조정), 재무제표, 애널리스트 의견, 최근 3주 뉴스, SPY, VIX, 금리, 섹터 ETF"],
-  ["기술적 분석", "추세(SMA50/200, ADX), 모멘텀, SPY 대비 상대강도, RSI, MACD, 거래량"],
+  ["데이터 수집", "10년 일봉(배당과 분할 조정), 재무제표, 애널리스트 의견, 최근 3주 뉴스, S&P500(SPY), VIX, 금리, 섹터 ETF"],
+  ["기술적 분석", "추세(50일선, 200일선, ADX), 모멘텀, S&P500 대비 상대강도, RSI, MACD, 거래량"],
   ["전략 검증", "전략 11개 × 변형 30개를 다음 날 시가 체결로 백테스트하고 워크포워드, 순열 검정, DSR 로 걸러 낸다"],
   ["시뮬레이션", "최근 3년 수익률을 블록 단위로 다시 뽑아 2,000개 가격 경로, 손절과 목표 도달 확률"],
   ["재무·가치평가", "수익성, 성장성, 건전성, DCF, 역DCF, PEG, 그레이엄, 애널리스트 컨센서스"],
@@ -16,6 +17,9 @@ const WEIGHTS: [string, number, number, number][] = [
   ["기술적 지표", 22, 12, 4], ["검증된 전략 신호", 22, 15, 5], ["과거 유사 국면", 8, 6, 2], ["뉴스 감성", 16, 10, 4],
   ["애널리스트 컨센서스", 6, 12, 10], ["밸류에이션", 4, 15, 28], ["재무 품질", 2, 12, 25], ["투자 대가 패널", 5, 10, 18], ["시장 국면", 15, 8, 4],
 ];
+
+const GRADE_RULE = ["순열 p ≤ 0.05, 샤프 ≥ 0.5, 거래 ≥ 15, DSR ≥ 0.8", "p ≤ 0.10, 샤프 ≥ 0.3, 거래 ≥ 8, DSR ≥ 0.5",
+  "p ≤ 0.25, 샤프 > 0, 거래 ≥ 5", "위 조건을 하나도 채우지 못함"];
 
 export default function Method() {
   return (
@@ -37,8 +41,9 @@ export default function Method() {
           <h2>종합 점수와 판단</h2>
           <p className="formula">S = Σ (가중치 × 신뢰도 × 점수) ÷ Σ 가중치</p>
           <ul>
-            <li>각 모듈 점수는 -1(매도) ~ +1(매수), 신뢰도는 0 ~ 1</li>
-            <li>S ≥ +0.15 매수, S ≤ -0.15 매도, 그 사이는 관망. |S| ≥ 0.35 면 '강한'</li>
+            <li>각 모듈 점수는 -100(매도 쪽) ~ +100(매수 쪽), 신뢰도는 0 ~ 100%</li>
+            <li>S가 +15 이상이면 매수, -15 이하면 매도, 그 사이는 관망. ±35 를 넘으면 '강한'</li>
+            <li>모듈 판정도 같은 경계를 쓴다: +40 이상 강한 매수 근거, +15 이상 매수 근거, -15~+15 중립, -15 이하 매도 근거, -40 이하 강한 매도 근거</li>
             <li>실적 발표 10일 이내, 연 변동성 60% 초과면 신뢰도를 낮춘다</li>
             <li>판단 기간이 지나면 기록 화면에서 적중을 매긴다 (매수 +2% 초과, 매도 -2% 미만, 관망 ±5% 이내)</li>
           </ul>
@@ -55,15 +60,16 @@ export default function Method() {
 
       <section className="card">
         <h2>전략 검증 등급</h2>
-        <table className="table compact">
-          <thead><tr><th>등급</th><th>판단 가중치</th><th>조건 (모두 표본 밖 성과)</th></tr></thead>
+        <p>A~F 등급은 전략 검증에만 쓴다. 전략이 과거에 낸 성과가 우연이 아닌지를 매기고, 등급이 높을수록 그 전략의 지금 신호를 판단에 크게 반영한다.
+          결과 요약의 '매수 근거', '매도 근거' 표시는 모듈 점수의 방향이라 등급과 다르다.</p>
+        <div className="table-wrap"><table className="table compact text">
+          <thead><tr><th>등급</th><th>뜻</th><th>판단 반영</th><th>조건 (모두 표본 밖 성과)</th></tr></thead>
           <tbody>
-            <tr><th scope="row"><span className="grade g-A">A</span></th><td>1.0</td><td>순열 p ≤ 0.05, 샤프 ≥ 0.5, 거래 ≥ 15, DSR ≥ 0.8</td></tr>
-            <tr><th scope="row"><span className="grade g-B">B</span></th><td>0.6</td><td>p ≤ 0.10, 샤프 ≥ 0.3, 거래 ≥ 8, DSR ≥ 0.5</td></tr>
-            <tr><th scope="row"><span className="grade g-C">C</span></th><td>0.25</td><td>p ≤ 0.25, 샤프 &gt; 0, 거래 ≥ 5</td></tr>
-            <tr><th scope="row"><span className="grade g-F">F</span></th><td>0</td><td>그 외 (판단에 쓰지 않음)</td></tr>
+            {GRADE_INFO.map(([g, meaning, use], i) => (
+              <tr key={g}><th scope="row"><span className={`grade g-${g}`}>{g}</span></th><td>{meaning}</td><td>{use}</td><td>{GRADE_RULE[i]}</td></tr>
+            ))}
           </tbody>
-        </table>
+        </table></div>
         <p className="hint">단일 종목 10년 일봉에서는 대부분의 타이밍 전략이 우연과 구별되지 않는다. 그럴 때 이 모듈은 판단에서 빠진다.</p>
       </section>
 

@@ -125,6 +125,19 @@ class TestVerdict(unittest.TestCase):
         b = vd.combine(self.mods(0.5), "short", {"vol_1y": 0.2}, 3)["confidence"]
         self.assertLess(b, a)
 
+    def test_tidy_summary_drops_other_verdicts(self):
+        s = "적정가가 현재가를 크게 웃돌아 매도 판단이 섭니다. 재무 건전성은 반대 근거입니다. 200일선 회복을 지켜봅니다."
+        self.assertEqual(vd.tidy_summary(s, "관망"), "재무 건전성은 반대 근거입니다. 200일선 회복을 지켜봅니다.")
+        self.assertEqual(vd.tidy_summary("관망 판단입니다. 근거가 엇갈립니다.", "관망"), "관망 판단입니다. 근거가 엇갈립니다.")
+        self.assertEqual(vd.tidy_summary("매수 판단이 우세합니다.", "관망"), "매수 판단이 우세합니다.")  # 다 빠지면 원문
+
+    def test_noun_end(self):
+        cases = {"추세가 약합니다.": "추세가 약함", "하락 위험이 큽니다": "하락 위험이 큼", "보유 신호를 보입니다": "보유 신호를 보임",
+                 "변동성이 높습니다": "변동성이 높음", "매도 쪽으로 바뀝니다": "매도 쪽으로 바뀜", "데드크로스 상태입니다": "데드크로스 상태임",
+                 "중기 추세가 우상향": "중기 추세가 우상향", "부채가 적어 금리 부담이 작음": "부채가 적어 금리 부담이 작음"}
+        for a, b in cases.items():
+            self.assertEqual(vd.noun_end(a), b)
+
 
 class TestNimClient(unittest.TestCase):
     def test_retry_fallback_and_parse(self):

@@ -1,7 +1,7 @@
 /** 상세 섹션: 전략 검증, 가치평가, 재무 품질·컨센서스, 투자 대가 패널, 뉴스, 유사 국면. */
 import { useMemo, useState } from "react";
 import type { Horizon, Result, StrategyResult } from "../api";
-import { HORIZON_LABEL, date, dirClass, num, pct, signed, usd } from "../format";
+import { GRADE_INFO, HORIZON_LABEL, date, dirClass, num, pct, signed, usd } from "../format";
 import { EquityChart, FootballField, Histogram } from "./Charts";
 import { Term } from "./Glossary";
 import { MetaList } from "./ui";
@@ -25,10 +25,15 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
       <h2 id="strat-title">전략 검증 <span className="sub"><MetaList items={[`${v.start} ~ ${v.end}`, `${v.bars.toLocaleString()}봉`, `변형 ${v.n_trials}개`, `워크포워드 ${v.folds}구간`]} /></span></h2>
       <p className="hint">숫자는 모두 표본 밖(OOS) 성과입니다. 직전 3년에서 고른 파라미터를 다음 1년에 그대로 써서 이어 붙였습니다. 체결은 다음 날 시가, 편도 비용 0.05%, 현금은 단기 국채 금리.
         순열 p값 = 같은 보유 패턴을 무작위 시점에 둘 때 이만큼 나올 확률. DSR = 변형 {v.n_trials}개를 시험한 것을 감안한 샤프 신뢰도(기준 샤프 {num(v.sr0_annual, 2)}).</p>
+      <dl className="grade-legend" aria-label="검증 등급의 뜻">
+        {GRADE_INFO.map(([g, meaning, use]) => (
+          <div key={g}><dt><span className={`grade g-${g}`}>{g}</span></dt><dd>{meaning}<small>{use}</small></dd></div>
+        ))}
+      </dl>
       <div className="table-wrap">
         <table className="table">
           <thead>
-            <tr><th>전략</th><th>등급</th><th><Term k="OOS" /> <Term k="샤프" /></th><th>OOS 연수익</th><th><Term k="MDD">최대 낙폭</Term></th><th>거래</th><th>승률</th><th><Term k="p값" /></th><th><Term k="DSR" /></th><th>지금 신호</th></tr>
+            <tr><th>전략</th><th>검증 등급</th><th><Term k="OOS" /> <Term k="샤프" /></th><th>OOS 연수익</th><th><Term k="MDD">최대 낙폭</Term></th><th>거래</th><th>승률</th><th><Term k="p값" /></th><th><Term k="DSR" /></th><th>지금 신호</th></tr>
           </thead>
           <tbody>
             {rows.map((s) => {
@@ -74,7 +79,7 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
           </dl>
         </div>
       )}
-      <p className="hint">등급: A(p≤0.05, 샤프≥0.5, 거래≥15, DSR≥0.8), B(p≤0.10, 샤프≥0.3, 거래≥8, DSR≥0.5), C(p≤0.25, 샤프&gt;0, 거래≥5), F(판단에 안 씀). 가격 차트의 화살표는 선택한 전략의 최근 2년 매매입니다.</p>
+      <p className="hint">검증 등급은 전략의 과거 성과가 우연이 아닌지를 매깁니다. 등급별 기준 숫자는 '검증 방법' 페이지에 있습니다. 가격 차트의 화살표는 선택한 전략의 최근 2년 매매입니다.</p>
     </section>
   );
 }

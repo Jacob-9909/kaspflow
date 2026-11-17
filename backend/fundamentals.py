@@ -284,9 +284,10 @@ def quality(m: dict) -> dict:
     worst = min(groups, key=groups.get)
     return {"available": True, "score": round(score, 3), "confidence": round(min(1.0, n / 10), 3),
             "groups": groups, "piotroski": f, "altman_z": None if z is None else round(z, 2),
-            "summary": f"강점 {best}({groups[best]:+.2f}), 약점 {worst}({groups[worst]:+.2f})"
-                       + (f", 피오트로스키 F {f['score']}/{f['max']}" if f else "")
-                       + (f", 알트만 Z {z:.2f}" if z is not None else "")}
+            "summary": (f"{best} {groups[best] * 100:+.0f}점으로 가장 좋고 {worst} {groups[worst] * 100:+.0f}점으로 가장 낮음" if best != worst
+                        else f"{best} {groups[best] * 100:+.0f}점")
+                       + (f", 피오트로스키 {f['score']}/{f['max']}점" if f else "")
+                       + (f", 알트만 Z {z:.2f}({'안전' if z > 2.99 else '회색 지대' if z > 1.81 else '위험'})" if z is not None else "")}
 
 
 # ------------------------------------------------------------
@@ -442,9 +443,11 @@ def valuation(m: dict, analyst: dict | None, rf: float, beta: float | None, low5
     wsum = sum(w for w, _ in parts)
     score = sum(w * s for w, s in parts) / wsum
     upside = fair / price - 1 if fair else None
-    summary = (f"적정가 추정 ${fair:,.2f} (현재가 대비 {upside:+.0%})" if fair else "적정가 추정 불가")
+    # 퍼센트의 기준(현재가냐 적정가냐)은 읽는 사람도 AI 해설도 자주 뒤집는다. 고평가는 배수, 저평가는 '상승 여력' 으로 쓴다
+    summary = ("적정가를 추정하지 못함" if not fair else f"추정 적정가 ${fair:,.2f}, 상승 여력 {upside:+.0%}" if upside >= 0
+               else f"현재가가 추정 적정가 ${fair:,.2f}의 {price / fair:.1f}배")
     if dcf:
-        summary += f", 현재가가 가정하는 5년 성장률 {dcf['implied_growth']:+.0%} vs 현실적 성장률 {dcf['growth']:+.0%}"
+        summary += f". 지금 주가는 5년간 연 {dcf['implied_growth']:+.0%} 성장을 전제(현실적 추정 연 {dcf['growth']:+.0%})"
     return {"available": True, "score": round(score, 3), "confidence": round(min(1.0, wsum / 0.8), 3),
             "fair_value": None if fair is None else round(fair, 2), "upside": None if upside is None else round(upside, 4),
             "dcf": dcf, "models": {k: round(v, 2) for k, v in avail.items()}, "football_field": field,
@@ -455,9 +458,12 @@ def valuation(m: dict, analyst: dict | None, rf: float, beta: float | None, low5
 # ------------------------------------------------------------
 # 애널리스트 컨센서스 (의견·목표가·EPS 추정치 변화)
 # ------------------------------------------------------------
+REC_KO = {"strong_buy": "강력 매수", "buy": "매수", "hold": "보유", "underperform": "비중 축소", "sell": "매도"}
+
+
 def consensus(info: dict, analyst: dict | None, price: float) -> dict:
     a = analyst or {}
-    n = info.get("numberOfAnalystOpinions") or 0
+    n = int(info.get("numberOfAnalystOpinions") or 0)
     parts: list[tuple[float, float]] = []
     detail = {"analysts": n, "rec_mean": info.get("recommendationMean"), "rec_key": info.get("recommendationKey")}
     if _ok(info.get("recommendationMean")) and n:
@@ -486,12 +492,15 @@ def consensus(info: dict, analyst: dict | None, price: float) -> dict:
     wsum = sum(w for w, _ in parts)
     score = sum(w * s for w, s in parts) / wsum
     bits = []
-    if detail.get("rec_key"):
-        bits.append(f"투자의견 {detail['rec_key']} (평균 {detail['rec_mean']:.2f}, {n}명)")
+    if detail.get("rec_key") and _ok(detail.get("rec_mean")):
+        rec = REC_KO.get(detail["rec_key"], detail["rec_key"])
+        bits.append(f"애널리스트 {n}명 평균 의견 '{rec}'" if n else f"평균 의견 '{rec}'")
     if "target_upside" in detail:
-        bits.append(f"목표가 괴리 {detail['target_upside']:+.0%}")
+        up = detail["target_upside"]
+        bits.append(f"평균 목표가는 현재가보다 {abs(up):.0%} {'높음' if up > 0 else '낮음'}")
     if "eps_revision_net" in detail:
-        bits.append(f"최근 30일 EPS 추정 상향-하향 {detail['eps_revision_net']:+.2f}")
+        net = detail["eps_revision_net"]
+        bits.append("최근 30일 이익 추정치 " + ("상향이 많음" if net > 0.2 else "하향이 많음" if net < -0.2 else "상향과 하향이 비슷함"))
     return {"available": True, "score": round(score, 3), "confidence": round(min(1.0, n / 10) * min(1.0, wsum / 0.6), 3),
             "detail": detail, "recent": (a.get("updown") or {}).get("recent", []), "summary": ", ".join(bits)}
 
