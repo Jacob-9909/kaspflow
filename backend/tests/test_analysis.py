@@ -138,6 +138,30 @@ class TestVerdict(unittest.TestCase):
         for a, b in cases.items():
             self.assertEqual(vd.noun_end(a), b)
 
+    def test_trigger_direction_and_fill(self):
+        price = 381.43
+        items = ["종가가 200일선 $382.48 아래로 내려가면 매도 쪽으로 바뀜",   # 이미 아래: 빼야 함
+                 "종가가 볼린저 하단 $353.90 아래로 내려가면 매도 쪽으로 바뀜",
+                 "목표가 $447.66 도달 시 일부 정리, 손절가 $348.32 아래로 내려가면 정리",
+                 "이익 추정치 상향이 이어지면 매수 쪽으로 바뀜"]
+        self.assertEqual(vd.check_triggers(items, price), items[1:])
+        levels = {"200일선": 382.48, "20일선": 385.94, "볼린저 하단": 353.9, "52주 최저": 214.25}
+        self.assertEqual(vd.price_triggers(price, levels, "hold"),
+                         ["종가가 200일선 $382.48 위로 올라서면 매수 쪽으로 기움", "종가가 볼린저 하단 $353.90 아래로 내려가면 매도 쪽으로 기움"])
+
+    def test_tidy_narrative_grounds_numbers(self):
+        prompt = "현재가 $381.43. 추정 적정가 $15.36, 현재가가 적정가의 24.8배. 6개월 -7.4%. 200일선 $382.48. 볼린저 하단 $353.90"
+        n = {"headline": "적정가의 25배인데 이익은 40% 늘어남", "summary": "현재가가 적정가의 24.8배입니다. 매출이 37% 늘었습니다.",
+             "bull": ["6개월 -7.4%로 약세"], "bear": ["현재가가 적정가의 24.8배"], "risks": ["점유율 12% 하락"],
+             "triggers": ["종가가 200일선 $382.48 아래로 내려가면 매도 쪽으로 바뀜"]}
+        v = {"verdict": "hold", "label": "관망"}
+        out, dropped = vd.tidy_narrative(n, v, prompt, 381.43, {"200일선": 382.48, "볼린저 하단": 353.9})
+        self.assertEqual(out["summary"], "현재가가 적정가의 24.8배입니다.")           # 입력에 없는 37% 문장은 빠짐
+        self.assertEqual(out["risks"], [])
+        self.assertEqual(out["headline"], "현재가가 적정가의 24.8배")                  # 근거 없는 40% 제목은 첫 매도 근거로
+        self.assertEqual(out["triggers"][0], "종가가 200일선 $382.48 위로 올라서면 매수 쪽으로 기움")
+        self.assertEqual(dropped, 4)
+
 
 class TestNimClient(unittest.TestCase):
     def test_retry_fallback_and_parse(self):

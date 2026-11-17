@@ -239,8 +239,12 @@ def cio_prompt(symbol: str, name: str, price: float, verdicts: dict, horizon: st
         fair = val["fair_value"]
         lines.append(f"- 적정가 비교: 추정 적정가 ${fair:,.2f}, " + (f"상승 여력 {fair / price - 1:+.0%}" if fair >= price
                      else f"현재가가 적정가의 {price / fair:.1f}배"))
-    lines += ["", "[주요 가격대] " + ", ".join(f"{k} ${v:,.2f}" for k, v in levels.items() if v),
-              f"[매매 계획] 손절가 ${plan['stop']:,.2f}, 목표가 ${plan['target']:,.2f}. 기간 안에 목표가에 먼저 닿을 확률 {plan['p_target_first']:.0%}, "
+    above = sorted((v, k) for k, v in levels.items() if v and v > price)
+    below = sorted(((v, k) for k, v in levels.items() if v and v <= price), reverse=True)
+    near = lambda xs: ", ".join(f"{k} ${v:,.2f}({v / price - 1:+.1%})" for v, k in xs) or "없음"
+    lines += ["", f"[주요 가격대] 현재가 ${price:,.2f} 기준. 위: {near(above)}. 아래: {near(below)}",
+              f"[매매 계획] 손절가 ${plan['stop']:,.2f}({plan['stop_pct']:+.1%}), 목표가 ${plan['target']:,.2f}({plan['target_pct']:+.1%}). "
+              f"기간 안에 목표가에 먼저 닿을 확률 {plan['p_target_first']:.0%}, "
               f"손절가에 먼저 닿을 확률 {plan['p_stop_first']:.0%}",
               f"[리스크] 연 변동성 {risk['vol_1y']:.0%}, 1년 최대 낙폭 {risk['mdd_1y']:.0%}, 베타 {'-' if risk.get('beta') is None else f"{risk['beta']:.2f}"}"]
     for p in (personas.get("members") or {}).values():
@@ -256,6 +260,7 @@ def cio_prompt(symbol: str, name: str, price: float, verdicts: dict, horizon: st
               "- bull: 매수 쪽 근거 3개 이내, bear: 매도 쪽 근거 3개 이내. 한 항목에 근거 하나, 40자 안팎.",
               "- risks: 판단을 틀리게 만들 수 있는 위험 3개 이내.",
               "- triggers: 판단이 바뀌는 조건 3개 이내. 위 가격대 숫자를 쓴다(예: 종가가 200일선 $X 아래로 내려가면 매도 쪽으로).",
+              "  현재가보다 위에 있는 가격대는 '위로 올라서면', 아래에 있는 가격대는 '아래로 내려가면' 으로만 쓴다.",
               "  보유하지 않았다면 '매수를 검토할 조건' 과 '판단이 매도로 바뀌는 조건' 을 쓰고, 손절이나 익절을 '실행' 하라고 쓰지 않는다.",
               "  보유 중이라면 '정리를 고려할 조건' 과 '더 살 수 있는 조건' 을 쓴다."]
     return "\n".join(lines)
@@ -286,11 +291,83 @@ def noun_end(s: str) -> str:
     return s
 
 
-def tidy_narrative(n: dict, label: str) -> dict:
-    out = {k: [noun_end(x) for x in v] if isinstance(v, list) else v for k, v in n.items()}
-    out["headline"] = noun_end(out.get("headline", ""))
-    out["summary"] = tidy_summary(out.get("summary", ""), label)
+_PRICE = re.compile(r"\$([\d,]+(?:\.\d+)?)")
+_UP = re.compile(r"위로|넘|돌파|올라")
+_DOWN = re.compile(r"아래로|밑으로|내려|하회|이탈|깨지")
+_NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def check_triggers(items: list[str], price: float) -> list[str]:
+    """'판단이 바뀌는 조건' 에서 현재가와 방향이 맞지 않는 항목을 뺀다 (예: 이미 200일선 아래인데
+    '200일선 아래로 내려가면'). 쉼표로 나눈 절마다 가격과 방향어를 짝지어 본다. 가격이 없는 조건은 둔다."""
+    ok = []
+    for t in items:
+        bad = False
+        for part in t.split(","):
+            m = _PRICE.search(part)
+            if not m:
+                continue
+            x = float(m.group(1).replace(",", ""))
+            up, down = bool(_UP.search(part)), bool(_DOWN.search(part))
+            bad |= (up and not down and x <= price) or (down and not up and x >= price)
+        if not bad:
+            ok.append(t)
+    return ok
+
+
+def price_triggers(price: float, levels: dict, verdict: str) -> list[str]:
+    """현재가 바로 위와 아래 가격대로 만든 조건. AI 조건이 검사에서 빠져 모자랄 때 채운다."""
+    above = sorted((v, k) for k, v in levels.items() if v and v > price)
+    below = sorted(((v, k) for k, v in levels.items() if v and v < price), reverse=True)
+    up_to = {"buy": "매수 근거가 강해짐", "hold": "매수 쪽으로 기움", "sell": "관망 쪽으로 기움"}[verdict]
+    down_to = {"buy": "관망 쪽으로 기움", "hold": "매도 쪽으로 기움", "sell": "매도 근거가 강해짐"}[verdict]
+    out = []
+    if above:
+        out.append(f"종가가 {above[0][1]} ${above[0][0]:,.2f} 위로 올라서면 {up_to}")
+    if below:
+        out.append(f"종가가 {below[0][1]} ${below[0][0]:,.2f} 아래로 내려가면 {down_to}")
     return out
+
+
+def grounded(text: str, facts: set[float]) -> bool:
+    """문장 속 숫자가 모두 AI 에 준 입력에 있는가. 반올림한 값도 인정한다(2.1배 -> '2배', $164.34 -> '$164')."""
+    for t in _NUM.findall(text):
+        s = t.replace(",", "")
+        d = len(s.split(".")[1]) if "." in s else 0
+        if not any(round(f, d) == float(s) for f in facts):
+            return False
+    return True
+
+
+def tidy_narrative(n: dict, v: dict, prompt: str, price: float, levels: dict) -> tuple[dict, int]:
+    """AI 해설을 화면에 내기 전에 바로잡는다. 실행마다 달리 나오는 실수를 코드로 막는다:
+    다른 판단을 섞은 문장, 입력에 없는 숫자, 현재가와 방향이 맞지 않는 조건, 들쭉날쭉한 끝맺음.
+    돌려주는 두 번째 값은 뺀 문장·항목 수 (결과 meta 에 남긴다)."""
+    facts = {float(t.replace(",", "")) for t in _NUM.findall(prompt)}
+    dropped = 0
+
+    def keep(items: list[str]) -> list[str]:
+        nonlocal dropped
+        ok = [x for x in items if grounded(x, facts)]
+        dropped += len(items) - len(ok)
+        return ok
+
+    out = {k: [noun_end(x) for x in keep(val)] if isinstance(val, list) else val for k, val in n.items()}
+    trig = check_triggers(out.get("triggers", []), price)
+    dropped += len(out.get("triggers", [])) - len(trig)
+    if len(trig) < 2:
+        trig += [t for t in price_triggers(price, levels, v["verdict"]) if not any(_PRICE.search(t).group(0) in x for x in trig)]
+    out["triggers"] = trig[:3]
+    sents = [x for x in re.split(r"(?<=[.!?])\s+", tidy_summary(n.get("summary", ""), v["label"]).strip()) if x]
+    ok = keep(sents)
+    out["summary"] = " ".join(ok) if ok else n.get("summary", "")
+    head = noun_end(n.get("headline", ""))
+    if not grounded(head, facts):
+        dropped += 1
+        first = (out.get("bull") if v["verdict"] == "buy" else out.get("bear")) or out.get("bull") or out.get("bear") or [""]
+        head = first[0] or head
+    out["headline"] = head
+    return out, dropped
 
 
 def fallback_narrative(v: dict, modules: dict, plan: dict) -> dict:

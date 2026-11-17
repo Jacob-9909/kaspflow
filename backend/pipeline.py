@@ -181,7 +181,7 @@ async def run(symbol: str, horizon: str, position: dict | None, cache, llm, load
     sel = verdicts[horizon]
     mods = {**base, "analogs": analogs[horizon]}
     adv = vd.advice(sel, position, price, plans[horizon])
-    narr_err = None
+    narr_err, narr_dropped = None, 0
     if getattr(llm, "enabled", False):
         prompt = vd.cio_prompt(symbol, name, price, verdicts, horizon, mods, tech.get("levels", {}),
                                plans[horizon], panel, sent.get("drivers", []), risk, position)
@@ -189,7 +189,8 @@ async def run(symbol: str, horizon: str, position: dict | None, cache, llm, load
         if isinstance(res, Exception):
             narr_err, narrative = str(res)[:200], vd.fallback_narrative(sel, mods, plans[horizon])
         else:
-            narrative = vd.tidy_narrative({k: (v[:4] if isinstance(v, list) else v) for k, v in res.model_dump().items()}, sel["label"])
+            narrative, narr_dropped = vd.tidy_narrative({k: (v[:4] if isinstance(v, list) else v) for k, v in res.model_dump().items()},
+                                                        sel, prompt, price, tech.get("levels", {}))
     else:
         narr_err, narrative = "LLM 미설정", vd.fallback_narrative(sel, mods, plans[horizon])
     yield step("verdict", "done", detail=f"{sim.HORIZON_LABEL[horizon]}: {sel['label']} (점수 {sel['score']:+.2f})")
@@ -205,7 +206,7 @@ async def run(symbol: str, horizon: str, position: dict | None, cache, llm, load
         "news": {"aggregate": sent, "items": items[:40], "error": news_err},
         "personas": panel, "chart": _chart(df_all),
         "meta": {"duration_ms": int((time.monotonic() - started) * 1000), "llm_model": getattr(llm, "model", None),
-                 "llm_calls": getattr(llm, "calls", None), "narrative_error": narr_err,
+                 "llm_calls": getattr(llm, "calls", None), "narrative_error": narr_err, "narrative_dropped": narr_dropped,
                  "data_fetched_at": b.get("fetched_at"), "disclaimer": DISCLAIMER},
     }
     yield _ev("result", data=market._jsonable(result))
