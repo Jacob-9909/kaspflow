@@ -33,6 +33,12 @@ export function date(iso: string | null | undefined): string {
   return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/** 몇 분 전, 몇 시간 전 */
+export function ago(iso: string): string {
+  const min = Math.max(1, Math.round((Date.now() - Date.parse(iso)) / 60000));
+  return min < 60 ? `${min}분 전` : `${Math.round(min / 60)}시간 전`;
+}
+
 export function dateTime(iso: string): string {
   const d = new Date(iso);
   return `${date(iso)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;

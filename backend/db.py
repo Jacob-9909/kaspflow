@@ -75,12 +75,12 @@ class DB:
 
     def list_runs(self, symbol: str | None, limit: int) -> list[dict]:
         sql = ("SELECT id, symbol, name, created_at, horizon, verdict, score, confidence, price, "
-               "result->'narrative'->>'headline' FROM stock.analysis_run "
+               "result->'narrative'->>'headline', result->'position' FROM stock.analysis_run "
                + ("WHERE symbol = %s " if symbol else "") + "ORDER BY created_at DESC LIMIT %s")
         args = (symbol, limit) if symbol else (limit,)
         with self.pool.connection() as c:
             rows = c.execute(sql, args).fetchall()
-        keys = ("id", "symbol", "name", "created_at", "horizon", "verdict", "score", "confidence", "price", "headline")
+        keys = ("id", "symbol", "name", "created_at", "horizon", "verdict", "score", "confidence", "price", "headline", "position")
         return [dict(zip(keys, row)) for row in rows]
 
     def get_run(self, run_id: str) -> dict | None:

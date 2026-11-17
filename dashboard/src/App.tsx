@@ -236,7 +236,8 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
 
   const runPanel = (quote || result) && symbol && (
     <RunPanel key={result?.run_id ?? "new"} symbol={symbol} authed={!!me?.authenticated} loginEnabled={!!me?.login_enabled}
-              running={running} onRun={run} onLogin={onLogin} horizonHint={result?.horizon} />
+              running={running} onRun={run} onLogin={onLogin} horizonHint={result?.horizon}
+              recent={past?.runs} viewingId={result?.run_id} onOpenRun={onOpen} />
   );
 
   const priceChart = (h: number) => result

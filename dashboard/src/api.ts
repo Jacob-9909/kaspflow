@@ -111,6 +111,7 @@ export interface Result {
 export interface RunRow {
   id: string; symbol: string; name: string; created_at: string; horizon: Horizon; verdict: Verdict; score: number; confidence: number;
   price: number; headline: string | null; due: string; evaluated: boolean; return: number | null; hit: boolean | null; current: number | null;
+  position?: { qty: number; avg_price: number } | null;
 }
 
 export interface RunsResponse {
