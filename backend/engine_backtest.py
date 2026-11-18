@@ -1,7 +1,7 @@
 """판단 엔진의 과거 성적 (부분 검증).
 
 대형주들의 10년 일봉으로, 매달 '그 시점까지의 데이터' 만 써서 판단 엔진을 다시 돌리고 1·3·12개월 뒤 결과와 맞춰 본다.
-적중 기준은 판단 기록 화면과 같다 (app.judge: 매수 +2% 초과, 매도 -2% 미만, 관망 ±5% 이내).
+적중 기준은 판단 기록 화면과 같다 (verdict.judge: 매수 +2% 초과, 매도 -2% 미만, 관망 ±5% 이내).
 
 과거 시점 값이 있는 모듈만 쓴다: 기술적 지표, 과거 유사 국면, 시장 국면. 가중치는 이 셋으로 다시 나눈다 (verdict.combine).
 - 재무·밸류에이션·애널리스트·뉴스·투자 대가: 과거 시점 값이 없다 (yfinance 는 지금 값과 최근 4~5년 재무제표만 준다).
@@ -24,7 +24,7 @@ import pandas as pd
 import market
 import simulation as sim
 import verdict as vd
-from app import judge
+from verdict import judge
 
 # 섹터별 대형주 (섹터 ETF 는 시장 국면의 업종 추세에 쓴다)
 UNIVERSE = {
@@ -39,8 +39,9 @@ CONF_BINS = [(0.0, 0.6), (0.6, 0.8), (0.8, 1.01)]   # 신뢰도 분포의 대략
 
 
 def evaluate(df: pd.DataFrame, spy: pd.Series, vix: pd.Series, tnx: pd.Series, sec: pd.Series | None, sec_sym: str | None,
-             step: int = STEP, start: int = START) -> list[dict]:
-    """한 종목: step 봉마다 그 시점까지의 데이터로 기간별 판단을 내고 이후 수익률을 붙인다 (미래 값은 쓰지 않는다)."""
+             step: int = STEP, start: int = START, sym: str = "") -> list[dict]:
+    """한 종목: step 봉마다 그 시점까지의 데이터로 기간별 판단을 내고 이후 수익률을 붙인다 (미래 값은 쓰지 않는다).
+    x 는 모듈 신호(점수 x 신뢰도)로, 가중치 자동 조정(tuning.py)이 쓴다."""
     rows, c = [], df["Close"]
     for i in range(start, len(df), step):
         t = df.index[i]
@@ -53,10 +54,33 @@ def evaluate(df: pd.DataFrame, spy: pd.Series, vix: pd.Series, tnx: pd.Series, s
         for h, n in sim.HORIZONS.items():
             if i + n >= len(df):
                 continue
-            v = vd.combine({"technical": tech, "regime": reg, "analogs": sim.analogs(d, h)}, h, risk, None)
-            rows.append({"h": h, "date": str(t.date()), "verdict": v["verdict"], "conf": v["confidence"],
-                         "ret": float(c.iloc[i + n] / c.iloc[i] - 1)})
+            mods = {"technical": tech, "regime": reg, "analogs": sim.analogs(d, h)}
+            v = vd.combine(mods, h, risk, None)
+            rows.append({"h": h, "date": str(t.date()), "sym": sym, "verdict": v["verdict"], "conf": v["confidence"],
+                         "ret": float(c.iloc[i + n] / c.iloc[i] - 1),
+                         "x": {k: round(m["score"] * m["confidence"], 4) for k, m in mods.items() if m.get("available")}})
     return rows
+
+
+def collect(cache=None, symbols: set[str] | None = None, log=print) -> tuple[list[dict], list[str]]:
+    """UNIVERSE 전체(또는 symbols)의 표본. cache 가 있으면 하루 동안 다시 받지 않는다 (서버의 월간 자동 조정용)."""
+    def hist(s: str):
+        return market._cached(cache, f"yf:series:{s}:10y", 86400, lambda: market._history(s, "10y")) if cache else market._history(s, "10y")
+    series = {s: market.close_series(hist(s)) for s in ("SPY", "^VIX", "^TNX", *UNIVERSE)}
+    rows, used = [], []
+    for etf, syms in UNIVERSE.items():
+        for sym in syms:
+            if symbols and sym not in symbols:
+                continue
+            p = hist(sym)
+            if not p:
+                log(f"skip {sym}: no data")
+                continue
+            got = evaluate(market.frame(p), series["SPY"], series["^VIX"], series["^TNX"], series[etf], etf, sym=sym)
+            rows += got
+            used.append(sym)
+            log(f"{sym}: {len(got)} rows")
+    return rows, used
 
 
 def summarize(rows: list[dict]) -> dict:
@@ -90,24 +114,8 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--symbols", help="쉼표로 구분 (기본: UNIVERSE 전체)")
     a = ap.parse_args()
-    pick = set(a.symbols.split(",")) if a.symbols else None
-    series = {s: market.close_series(market._history(s, "10y")) for s in ("SPY", "^VIX", "^TNX", *UNIVERSE)}
-    rows, used, span = [], [], []
-    for etf, syms in UNIVERSE.items():
-        for sym in syms:
-            if pick and sym not in pick:
-                continue
-            p = market._history(sym, "10y")
-            if not p:
-                print(f"skip {sym}: no data")
-                continue
-            df = market.frame(p)
-            got = evaluate(df, series["SPY"], series["^VIX"], series["^TNX"], series[etf], etf)
-            rows += got
-            used.append(sym)
-            if got:
-                span += [got[0]["date"], got[-1]["date"]]
-            print(f"{sym}: {len(got)} rows")
+    rows, used = collect(symbols=set(a.symbols.split(",")) if a.symbols else None)
+    span = [x["date"] for x in rows]
     w = vd.WEIGHTS
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "symbols": used,

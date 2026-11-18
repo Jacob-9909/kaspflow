@@ -417,6 +417,11 @@ li::marker { color: var(--text-faint); }
 .plan-note { margin: calc(-1 * var(--s2)) 0 var(--s4); }
 .record-conclusion { margin: var(--s3) 0 var(--s5); padding-left: var(--s5); font-weight: 600; }
 .record-conclusion li + li { margin-top: var(--s1); }
+.w-def { color: var(--text-muted); font-size: var(--fs-caption); }
+.tune-status { margin-top: var(--s4); font-size: var(--fs-sm); }
+.tune-status p { margin: 0 0 var(--s1); }
+.tune-status ul { margin: 0; color: var(--text-muted); }
+.tune-actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s4); }
 .record-avg { display: block; font-weight: 500; color: var(--text-muted); font-size: var(--fs-caption); }
 
 /* 근거 */
