@@ -70,7 +70,9 @@ IMAGE_TAG=sha-$(git rev-parse --short=7 HEAD) docker compose -f docker-compose.p
 
 ## L. 판단 기록 DB 백업 (2026-11-18)
 
-판단 기록(`crypto` DB 의 `stock` 스키마)을 매일 07:30 에 `pg_dump` 로 떠서 `/var/backups/postgres/` 에 14일 보관한다.
+판단 기록(`crypto` DB 의 `stock` 스키마)을 매일 07:30 에 `pg_dump` 로 떠서 `/var/backups/postgres/` 에 둔다.
+매일 백업은 60일, 매달 1일 백업은 2년 보관한다 (2026-11-18, 처음 14일에서 늘림). 손상이나 실수로 지운 기록을 두 달 늦게
+알아차려도 되돌릴 수 있고, 판단 기록은 월별 시점이 2년 치 남는다. 파일이 하루 약 200KB 라 다 합쳐도 수십 MB 다.
 `stock.cache` 는 캐시라 구조만 남긴다. 파일 이름은 `kaspflow-stock-YYYYMMDD.dump`(custom 형식).
 
 ```bash
