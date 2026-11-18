@@ -113,7 +113,7 @@ export default function App() {
       <main id="main" className="container">
         {route.view === "home" && <Home authed={!!me?.authenticated} onPick={(s) => go({ view: "symbol", symbol: s })} onOpen={(id) => go({ view: "symbol", run: id })} />}
         {route.view === "history" && <History onOpen={(id) => go({ view: "symbol", run: id })} />}
-        {route.view === "method" && <Method />}
+        {route.view === "method" && <Method authed={!!me?.authenticated} />}
         {route.view === "symbol" && (
           <SymbolPage key={route.run ?? route.symbol} route={route} me={me} theme={theme} onLogin={refreshMe}
                       onTab={(tab) => go({ ...route, tab }, true)}

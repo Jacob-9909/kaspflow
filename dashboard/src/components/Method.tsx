@@ -1,7 +1,8 @@
 /** 검증 방법 페이지: 판단이 어떻게 나오는지 한 화면에서 설명한다 (docs/methodology.md 의 요약). */
-import type { Horizon, Verdict } from "../api";
+import { useEffect, useState } from "react";
+import { api, type Horizon, type Verdict, type WeightsResponse } from "../api";
 import bt from "../engine-backtest.json";
-import { GRADE_INFO, HORIZON_LABEL, HORIZONS, VERDICT_LABEL, pct, signed } from "../format";
+import { GRADE_INFO, HORIZON_LABEL, HORIZONS, VERDICT_LABEL, date, num, pct, signed } from "../format";
 import { GLOSSARY } from "./Glossary";
 
 interface VStat { n: number; hit: number; base: number; avg: number }
@@ -85,15 +86,79 @@ const STEPS: [string, string][] = [
   ["종합 판단", "기간별 가중치로 합산. 계량 엔진이 판단을 정하고 AI 는 이유만 설명한다"],
 ];
 
-const WEIGHTS: [string, number, number, number][] = [
-  ["기술적 지표", 22, 12, 4], ["검증된 전략 신호", 22, 15, 5], ["과거 유사 국면", 8, 6, 2], ["뉴스 감성", 16, 10, 4],
-  ["애널리스트 컨센서스", 6, 12, 10], ["밸류에이션", 4, 15, 28], ["재무 품질", 2, 12, 25], ["투자 대가 패널", 5, 10, 18], ["시장 국면", 15, 8, 4],
+const MODULE_KO: [string, string][] = [
+  ["technical", "기술적 지표"], ["strategies", "검증된 전략 신호"], ["analogs", "과거 유사 국면"], ["sentiment", "뉴스 감성"],
+  ["consensus", "애널리스트 컨센서스"], ["valuation", "밸류에이션"], ["quality", "재무 품질"], ["personas", "투자 대가 패널"], ["regime", "시장 국면"],
 ];
+/** 서버에 묻지 못할 때 쓰는 기본값 (backend/verdict.py WEIGHTS 와 같다) */
+const DEFAULT_W: Record<Horizon, Record<string, number>> = {
+  short: { technical: .22, strategies: .22, analogs: .08, sentiment: .16, consensus: .06, valuation: .04, quality: .02, personas: .05, regime: .15 },
+  mid: { technical: .12, strategies: .15, analogs: .06, sentiment: .10, consensus: .12, valuation: .15, quality: .12, personas: .10, regime: .08 },
+  long: { technical: .04, strategies: .05, analogs: .02, sentiment: .04, consensus: .10, valuation: .28, quality: .25, personas: .18, regime: .04 },
+};
+
+/** 기간별 가중치: 지금 판단에 쓰는 값(자동 조정)과 기본값, 마지막 조정 결과. 로그인하면 다시 조정하거나 기본값으로 되돌릴 수 있다. */
+function WeightsCard({ authed }: { authed: boolean }) {
+  const [w, setW] = useState<WeightsResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const load = () => api.weights().then(setW).catch(() => setW(null));
+  useEffect(() => { load(); }, []);
+  useEffect(() => {   // 조정 중이면 끝날 때까지 5초마다 다시 본다
+    if (!w?.tuning) return;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [w?.tuning]);
+  const def = w?.defaults ?? DEFAULT_W, cur = w?.current ?? def;
+  const last = w?.history[0];
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setErr(null);
+    try { await fn(); await load(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  const p = (x: number) => Math.round(x * 100);
+  return (
+    <div className="card">
+      <h2>기간별 가중치 (%)</h2>
+      <table className="table compact">
+        <thead><tr><th>모듈</th>{HORIZONS.map((h) => <th key={h}>{HORIZON_LABEL[h]}</th>)}</tr></thead>
+        <tbody>{MODULE_KO.map(([k, name]) => (
+          <tr key={k}><th scope="row">{name}</th>
+            {HORIZONS.map((h) => <td key={h} className="num">{p(cur[h][k])}{p(cur[h][k]) !== p(def[h][k]) && <small className="w-def"> 기본 {p(def[h][k])}</small>}</td>)}</tr>
+        ))}</tbody>
+      </table>
+      <p className="hint">단기는 가격 흐름과 뉴스, 장기는 가치와 재무 품질이 판단을 이끈다. 서버가 {w?.rules.every_days ?? 28}일마다 백테스트와 기간이 지난 실제 판단 기록으로
+        가중치를 다시 계산한다. 모듈 신호와 그 뒤 수익률의 순위 상관(IC)이 높은 모듈에 더 주고, 표본이 적으면 기본값 쪽으로 붙잡는다.
+        앞 {pct(w?.rules.split ?? 0.7, 0, false)} 기간으로 고른 값이 뒤 기간에서 기본값보다 나을 때만 바꾸고, 실제 기록이 기간마다 독립 표본 {w?.rules.min_live ?? 60}개를
+        넘기 전에는 기술적 지표, 과거 유사 국면, 시장 국면 셋끼리만 비중을 나눈다.</p>
+      {last && (
+        <div className="tune-status">
+          <p><b>{last.report.reset ? "기본값으로 되돌림" : "마지막 자동 조정"}</b> {date(last.created_at)}
+            {!last.report.reset && <>. 백테스트 표본 {(last.report.n_backtest ?? 0).toLocaleString()}개, 실제 기록 {(last.report.n_live ?? 0).toLocaleString()}개</>}</p>
+          {last.report.horizons && (
+            <ul>{HORIZONS.map((h) => {
+              const r = last.report.horizons![h];
+              return r && <li key={h}>{HORIZON_LABEL[h]}: {r.adopted ? "조정함" : "기본값"}. {r.reason}
+                {r.oos && <> (표본 밖 IC 기본값 {num(r.oos.prior, 3)}, 조정안 {num(r.oos.proposed, 3)})</>}</li>;
+            })}</ul>
+          )}
+        </div>
+      )}
+      {authed && (
+        <div className="tune-actions">
+          <button className="btn outline" disabled={busy || !!w?.tuning} onClick={() => act(api.weightsTune)}>{w?.tuning ? "조정 중…" : "지금 다시 조정"}</button>
+          <button className="btn outline" disabled={busy || !!w?.tuning} onClick={() => act(api.weightsReset)}>기본값으로 되돌리기</button>
+        </div>
+      )}
+      {err && <p className="field-error" role="alert">{err}</p>}
+    </div>
+  );
+}
 
 const GRADE_RULE = ["순열 p ≤ 0.05, 샤프 ≥ 0.5, 거래 ≥ 15, DSR ≥ 0.8", "p ≤ 0.10, 샤프 ≥ 0.3, 거래 ≥ 8, DSR ≥ 0.5",
   "p ≤ 0.25, 샤프 > 0, 거래 ≥ 5", "위 조건을 하나도 채우지 못함"];
 
-export default function Method() {
+export default function Method({ authed = false }: { authed?: boolean }) {
   return (
     <div className="method">
       <section className="hero left">
@@ -120,14 +185,7 @@ export default function Method() {
             <li>판단 기간이 지나면 기록 화면에서 적중을 매긴다 (매수 +2% 초과, 매도 -2% 미만, 관망 ±5% 이내)</li>
           </ul>
         </div>
-        <div className="card">
-          <h2>기간별 가중치 (%)</h2>
-          <table className="table compact">
-            <thead><tr><th>모듈</th><th>단기 1개월</th><th>중기 3개월</th><th>장기 1년</th></tr></thead>
-            <tbody>{WEIGHTS.map(([m, s, mi, l]) => <tr key={m}><th scope="row">{m}</th><td>{s}</td><td>{mi}</td><td>{l}</td></tr>)}</tbody>
-          </table>
-          <p className="hint">단기는 가격 흐름과 뉴스, 장기는 가치와 재무 품질이 판단을 이끈다.</p>
-        </div>
+        <WeightsCard authed={authed} />
       </section>
 
       <EngineRecord />

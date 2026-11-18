@@ -7,6 +7,7 @@
   GET  /runs                   실행 기록 + 판단 뒤 수익률·적중 여부
   GET  /runs/{id}              저장된 결과 전체
   GET  /watchlist              관심 종목과 최근 판단 (POST·DELETE /watchlist 는 로그인 필요)
+  GET  /weights                판단 엔진 가중치 (기본값, 지금 값, 자동 조정 기록). POST /weights/tune|reset 은 로그인 필요
   POST /auth/login|logout, GET /auth/me   비밀번호 로그인 (APP_PASSWORD)
 
 실행만 로그인이 필요하고 결과 보기는 공개다 (2026-11-16 결정: NIM 호출 할당량 보호).
@@ -33,8 +34,12 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+import engine_backtest
 import market
 import pipeline
+import tuning
+import verdict as vd
+from verdict import HORIZON_DAYS, judge
 from db import DB
 from llm import NimLLM
 
@@ -43,11 +48,11 @@ log = logging.getLogger("kaspflow.app")
 
 COOKIE = "kf_session"
 SESSION_S = 14 * 86400
-HORIZON_DAYS = {"short": 30, "mid": 91, "long": 365}   # 적중 평가까지 기다리는 달력 일수
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_RUNS", "2"))
 NY = ZoneInfo("America/New_York")
 AUTORUN_AT = (16, 40)   # 관심 종목 자동 판단 시각 (뉴욕). 16:00 장 마감 뒤 일봉이 확정되고 나서
 WATCH_MAX = int(os.environ.get("WATCHLIST_MAX", "10"))   # 하루 NIM 호출 = 종목 수 x 9
+TUNE_EVERY = timedelta(days=28)   # 가중치 자동 조정 주기 (약 한 달)
 
 
 class State:
@@ -57,6 +62,8 @@ class State:
     tasks: set = set()
     login_fail: dict[str, deque] = defaultdict(deque)
     autorun: asyncio.Task | None = None
+    weights: dict | None = None    # {"version": id, "weights": {기간: {모듈: w}}}. None 이면 verdict.WEIGHTS
+    tuning: bool = False
 
 
 S = State()
@@ -77,7 +84,12 @@ async def lifespan(_: FastAPI):
     except Exception as exc:  # noqa: BLE001 - DB 가 늦게 뜨면 /health 가 degraded 로 알린다
         log.error("schema init failed: %r", exc)
     S.llm = NimLLM.from_env(cache=S.db)
-    log.info("kaspflow up: llm=%s model=%s", S.llm.enabled, S.llm.model)
+    try:
+        last = await asyncio.to_thread(S.db.weights_history, 1)
+        S.weights = {"version": last[0]["id"], "weights": last[0]["weights"]} if last else None
+    except Exception as exc:  # noqa: BLE001 - 표가 아직 없거나 DB 가 늦으면 기본값으로
+        log.warning("weights load failed: %r", exc)
+    log.info("kaspflow up: llm=%s model=%s weights=%s", S.llm.enabled, S.llm.model, (S.weights or {}).get("version"))
     if os.environ.get("AUTORUN", "1") != "0":
         S.autorun = asyncio.create_task(_autorun_loop())
     yield
@@ -204,7 +216,7 @@ async def _job(symbol: str, horizon: str, position: dict | None, queue: asyncio.
     """분석 작업. 클라이언트가 끊겨도 끝까지 돌고 저장한다 (queue 에 넣기만 하고 아무도 안 읽어도 된다)."""
     async with S.sem:
         try:
-            async for ev in pipeline.run(symbol, horizon, position, _store(), S.llm):
+            async for ev in pipeline.run(symbol, horizon, position, _store(), S.llm, weights=S.weights):
                 if ev["type"] == "result":
                     run_id = str(uuid.uuid4())
                     try:
@@ -279,7 +291,7 @@ def autorun_due(items: list[dict], now: datetime) -> list[dict]:
 
 async def _autorun_symbol(symbol: str, horizon: str) -> None:
     async with S.sem:
-        async for ev in pipeline.run(symbol, horizon, None, _store(), S.llm):
+        async for ev in pipeline.run(symbol, horizon, None, _store(), S.llm, weights=S.weights):
             if ev["type"] == "result":
                 ev["data"]["meta"]["source"] = "auto"
                 await asyncio.to_thread(S.db.save_run, str(uuid.uuid4()), ev["data"])
@@ -300,8 +312,72 @@ async def _autorun_loop() -> None:
                     log.warning("autorun failed %s: %r", w["symbol"], exc)
         except Exception as exc:  # noqa: BLE001 - DB 가 잠깐 안 될 때
             log.warning("autorun check failed: %r", exc)
+        try:
+            last = await asyncio.to_thread(S.db.weights_history, 1)
+            if not last or datetime.now(timezone.utc) - last[0]["created_at"] > TUNE_EVERY:
+                await _tune()
+        except Exception as exc:  # noqa: BLE001 - 조정이 실패해도 지금 가중치로 계속 판단한다
+            log.warning("tuning failed: %r", exc)
         now = datetime.now(timezone.utc)
         await asyncio.sleep(max(60.0, (_slot(now, 1) - now).total_seconds()))
+
+
+async def _tune() -> None:
+    """가중치 자동 조정: 백테스트(대형주, 10년, 매달) + 기간이 지난 실제 판단 기록 -> tuning.tune -> 기록하고 바로 쓴다."""
+    if S.tuning:
+        return
+    S.tuning = True
+
+    def work() -> dict:
+        bt, _ = engine_backtest.collect(cache=_store(), log=lambda *_: None)
+        prices: dict[str, pd.Series] = {}
+
+        def price_on(sym: str, day) -> float | None:
+            if sym not in prices:
+                prices[sym] = market.close_series(market._cached(_store(), f"yf:prices:{sym}", 86400, lambda: market._history(sym, "10y")))
+            after = prices[sym][prices[sym].index >= pd.Timestamp(day.date())]
+            return float(after.iloc[0]) if len(after) else None
+
+        live = tuning.live_samples(S.db.runs_for_tuning(), price_on)
+        w, rep = tuning.tune([{**r, "src": "bt"} for r in bt] + live)
+        adopted = any(r["adopted"] for r in rep.values())
+        vid = S.db.save_weights(w, adopted, {"horizons": rep, "n_backtest": len(bt), "n_live": len(live)})
+        log.info("tuning done: version=%s adopted=%s", vid, {h: r["adopted"] for h, r in rep.items()})
+        return {"version": vid, "weights": w}
+
+    try:
+        S.weights = await asyncio.to_thread(work)
+    finally:
+        S.tuning = False
+
+
+@app.get("/weights")
+async def weights():
+    hist = await asyncio.to_thread(S.db.weights_history, 6)
+    cur = S.weights or {}
+    return {"defaults": vd.WEIGHTS, "current": cur.get("weights") or vd.WEIGHTS, "version": cur.get("version"), "tuning": S.tuning,
+            "history": [{**r, "created_at": r["created_at"].isoformat()} for r in hist],
+            "rules": {"n0": tuning.N0, "min_live": tuning.MIN_LIVE, "margin": tuning.MARGIN, "split": tuning.SPLIT, "every_days": TUNE_EVERY.days}}
+
+
+@app.post("/weights/tune")
+async def weights_tune(request: Request):
+    _guard(request)
+    if S.tuning:
+        raise HTTPException(409, "이미 조정 중입니다")
+    task = asyncio.create_task(_tune())
+    S.tasks.add(task)
+    task.add_done_callback(S.tasks.discard)
+    return {"started": True}
+
+
+@app.post("/weights/reset")
+async def weights_reset(request: Request):
+    """기본값으로 되돌린다 (다음 자동 조정 때까지). 기록은 남는다."""
+    _guard(request)
+    vid = await asyncio.to_thread(S.db.save_weights, vd.WEIGHTS, False, {"reset": True})
+    S.weights = {"version": vid, "weights": vd.WEIGHTS}
+    return {"ok": True}
 
 
 def _guard(request: Request) -> None:
@@ -354,11 +430,6 @@ async def watch_remove(symbol: str, request: Request):
 # ------------------------------------------------------------
 # 기록 · 적중률
 # ------------------------------------------------------------
-def judge(verdict: str, ret: float) -> bool:
-    """midas-touch 판단 원장과 같은 기준: 매수는 +2% 초과, 매도는 -2% 미만, 관망은 ±5% 이내면 적중."""
-    return ret > 0.02 if verdict == "buy" else ret < -0.02 if verdict == "sell" else abs(ret) <= 0.05
-
-
 def _price_on(symbol: str, day: datetime) -> float | None:
     """평가일(이후 첫 거래일) 종가. 10년 가격 캐시가 있으면 쓴다 (과거 구간은 바뀌지 않으니 오래된 캐시도 유효)."""
     p = _store().get(f"yf:prices:{symbol}", 400 * 86400)

@@ -119,3 +119,22 @@ class DB:
     def remove_watch(self, symbol: str) -> None:
         with self.pool.connection() as c:
             c.execute("DELETE FROM stock.watchlist WHERE symbol = %s", (symbol,))
+
+    # --- 가중치 자동 조정 ---
+    def weights_history(self, n: int = 6) -> list[dict]:
+        with self.pool.connection() as c:
+            rows = c.execute("SELECT id, created_at, weights, adopted, report FROM stock.engine_weights ORDER BY id DESC LIMIT %s",
+                             (n,)).fetchall()
+        return [dict(zip(("id", "created_at", "weights", "adopted", "report"), r)) for r in rows]
+
+    def save_weights(self, weights: dict, adopted: bool, report: dict) -> int:
+        with self.pool.connection() as c:
+            return c.execute("INSERT INTO stock.engine_weights (weights, adopted, report) VALUES (%s, %s, %s) RETURNING id",
+                             (Jsonb(weights), adopted, Jsonb(report))).fetchone()[0]
+
+    def runs_for_tuning(self) -> list[dict]:
+        """판단 기간(가장 짧은 30일)이 지난 실행: 모듈 점수와 기간별 유사 국면, 실행 가격."""
+        with self.pool.connection() as c:
+            rows = c.execute("SELECT symbol, created_at, price, result->'modules', result->'analogs' FROM stock.analysis_run "
+                             "WHERE created_at < now() - interval '30 days'").fetchall()
+        return [dict(zip(("symbol", "created_at", "price", "modules", "analogs"), r)) for r in rows]

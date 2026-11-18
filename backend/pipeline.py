@@ -77,7 +77,8 @@ async def _timed(coro, seconds: float, fallback):
         return fallback(exc)
 
 
-async def run(symbol: str, horizon: str, position: dict | None, cache, llm, loader=market.load_bundle):
+async def run(symbol: str, horizon: str, position: dict | None, cache, llm, loader=market.load_bundle, weights: dict | None = None):
+    """weights: 자동 조정한 가중치 {"version": id, "weights": {기간: {모듈: w}}}. 없으면 verdict.WEIGHTS."""
     started = time.monotonic()
     stamps: dict[str, float] = {}
 
@@ -177,7 +178,8 @@ async def run(symbol: str, horizon: str, position: dict | None, cache, llm, load
     earnings_days = (pd.Timestamp(earnings).date() - datetime.now(NY).date()).days if earnings else None
     base = {"technical": tech, "strategies": strat_mod, "sentiment": sent, "consensus": cons, "valuation": val,
             "quality": qual, "personas": panel, "regime": reg}
-    verdicts = {h: vd.combine({**base, "analogs": analogs[h]}, h, risk, earnings_days) for h in sim.HORIZONS}
+    w = (weights or {}).get("weights")
+    verdicts = {h: vd.combine({**base, "analogs": analogs[h]}, h, risk, earnings_days, w) for h in sim.HORIZONS}
     sel = verdicts[horizon]
     mods = {**base, "analogs": analogs[horizon]}
     adv = vd.advice(sel, position, price, plans[horizon])
@@ -207,6 +209,7 @@ async def run(symbol: str, horizon: str, position: dict | None, cache, llm, load
         "personas": panel, "chart": _chart(df_all),
         "meta": {"duration_ms": int((time.monotonic() - started) * 1000), "llm_model": getattr(llm, "model", None),
                  "llm_calls": getattr(llm, "calls", None), "narrative_error": narr_err, "narrative_dropped": narr_dropped,
+                 "weights_version": (weights or {}).get("version"),
                  "data_fetched_at": b.get("fetched_at"), "disclaimer": DISCLAIMER},
     }
     yield _ev("result", data=market._jsonable(result))

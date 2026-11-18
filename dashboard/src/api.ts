@@ -119,6 +119,20 @@ export interface WatchRun { id: string; created_at: string; verdict: Verdict; sc
 export interface WatchItem { symbol: string; horizon: Horizon; added_at: string; name: string | null; last: WatchRun | null; prev: WatchRun | null }
 export interface WatchResponse { items: WatchItem[]; next_run: string; max: number }
 
+export type WeightMap = Record<Horizon, Record<string, number>>;
+export interface TuneReport {
+  mode: "backtest" | "all"; n: number; n_eff: number; n_live: number; adopted: boolean; reason: string;
+  ic?: Record<string, { ic: number | null; n: number }>; oos?: { cut: string; prior: number | null; proposed: number | null };
+}
+export interface WeightsRow {
+  id: number; created_at: string; adopted: boolean; weights: WeightMap;
+  report: { horizons?: Record<Horizon, TuneReport>; reset?: boolean; n_backtest?: number; n_live?: number };
+}
+export interface WeightsResponse {
+  defaults: WeightMap; current: WeightMap; version: number | null; tuning: boolean; history: WeightsRow[];
+  rules: { n0: number; min_live: number; margin: number; split: number; every_days: number };
+}
+
 export interface RunsResponse {
   runs: RunRow[];
   stats: { evaluated: number; hit_rate: number | null; by_verdict: Partial<Record<Verdict, { n: number; hit_rate: number; avg_return: number }>> };
@@ -158,6 +172,9 @@ export const api = {
   watchAdd: (symbol: string, horizon: Horizon) => getJSON<{ ok: boolean }>("/watchlist", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol, horizon }) }),
   watchRemove: (symbol: string) => getJSON<{ ok: boolean }>(`/watchlist/${encodeURIComponent(symbol)}`, { method: "DELETE" }),
+  weights: () => getJSON<WeightsResponse>("/weights"),
+  weightsTune: () => getJSON<{ started: boolean }>("/weights/tune", { method: "POST" }),
+  weightsReset: () => getJSON<{ ok: boolean }>("/weights/reset", { method: "POST" }),
 };
 
 /** 검증·시뮬레이션 실행. EventSource 는 같은 출처 쿠키를 자동으로 보낸다. 반환값으로 연결을 끊는다. */

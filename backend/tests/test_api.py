@@ -52,8 +52,15 @@ class FakeDB(MemCache):
     def remove_watch(self, symbol):
         self.watch.pop(symbol, None)
 
+    def weights_history(self, n=6):
+        return []
 
-async def fake_run(symbol, horizon, position, cache, llm, loader=None):
+    def save_weights(self, weights, adopted, report):
+        self.saved_weights = (weights, adopted, report)
+        return 7
+
+
+async def fake_run(symbol, horizon, position, cache, llm, loader=None, weights=None):
     yield {"type": "step", "step": "data", "status": "running"}
     yield {"type": "step", "step": "data", "status": "done", "detail": "ok"}
     yield {"type": "result", "data": {"symbol": symbol, "name": "X", "horizon": horizon, "quote": {"price": 10.0},
@@ -170,6 +177,18 @@ class TestAPI(unittest.TestCase):
         new = {"symbol": "B", "last": {"created_at": datetime(2026, 11, 20, 16, 50, tzinfo=ny)}}
         none = {"symbol": "C", "last": None}
         self.assertEqual([w["symbol"] for w in appmod.autorun_due([old, new, none], sun)], ["A", "C"])
+
+    def test_weights_api(self):
+        appmod.S.weights = None
+        r = self.c.get("/weights").json()
+        self.assertEqual(r["current"], r["defaults"])
+        self.assertIsNone(r["version"])
+        self.assertEqual(self.c.post("/weights/tune").status_code, 401)
+        self.assertEqual(self.c.post("/weights/reset").status_code, 401)
+        self.login()
+        self.assertEqual(self.c.post("/weights/reset").status_code, 200)
+        self.assertEqual(appmod.S.weights["version"], 7)
+        self.assertEqual(self.db.saved_weights[2], {"reset": True})
 
     def test_judge(self):
         self.assertTrue(appmod.judge("buy", 0.03))

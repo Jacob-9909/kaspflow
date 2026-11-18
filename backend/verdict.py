@@ -34,7 +34,13 @@ WEIGHTS = {
              "valuation": .28, "quality": .25, "personas": .18, "regime": .04},
 }
 BUY_TH, STRONG_TH = 0.15, 0.35
+HORIZON_DAYS = {"short": 30, "mid": 91, "long": 365}   # 적중 평가까지 기다리는 달력 일수
 LABEL = {"buy": "매수", "hold": "관망", "sell": "매도"}
+
+
+def judge(verdict: str, ret: float) -> bool:
+    """midas-touch 판단 원장과 같은 기준: 매수는 +2% 초과, 매도는 -2% 미만, 관망은 ±5% 이내면 적중."""
+    return ret > 0.02 if verdict == "buy" else ret < -0.02 if verdict == "sell" else abs(ret) <= 0.05
 
 
 def clip(x, lo=-1.0, hi=1.0):
@@ -139,8 +145,8 @@ def regime(spy: pd.Series, vix: pd.Series, tnx: pd.Series, sector: pd.Series | N
                        "sector_etf": sector_sym, "sector_above_200": sec_above, "beta_used": round(b, 2)}}
 
 
-def combine(modules: dict[str, dict], horizon: str, risk: dict, earnings_days: int | None) -> dict:
-    w = WEIGHTS[horizon]
+def combine(modules: dict[str, dict], horizon: str, risk: dict, earnings_days: int | None, weights: dict | None = None) -> dict:
+    w = (weights or WEIGHTS)[horizon]
     used = {k: m for k, m in modules.items() if k in w and m.get("available") and m.get("confidence", 0) > 0}
     wsum = sum(w[k] for k in used) or 1.0
     contrib = {k: w[k] * m["confidence"] * m["score"] / wsum for k, m in used.items()}

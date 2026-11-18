@@ -35,3 +35,13 @@ CREATE TABLE IF NOT EXISTS stock.watchlist (
     horizon   TEXT        NOT NULL DEFAULT 'mid' CHECK (horizon IN ('short', 'mid', 'long')),
     added_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 판단 엔진 가중치 자동 조정 기록 (tuning.py, 월 1회). 가장 최근 행의 weights 를 판단에 쓴다 (없으면 코드의 기본값).
+--   adopted : 한 기간이라도 기본값 대신 조정한 가중치를 쓰는가.  report : 기간별 IC, 표본 수, 표본 밖 검증, 이유
+CREATE TABLE IF NOT EXISTS stock.engine_weights (
+    id          SERIAL      PRIMARY KEY,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    weights     JSONB       NOT NULL,
+    adopted     BOOLEAN     NOT NULL,
+    report      JSONB       NOT NULL
+);
