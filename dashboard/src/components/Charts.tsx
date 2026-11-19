@@ -145,7 +145,9 @@ export function Gauge({ score, label }: { score: number; label: string }) {
       <path d={arc(-1, -0.15)} className="g-down" />
       <path d={arc(-0.15, 0.15)} className="g-hold" />
       <path d={arc(0.15, 1)} className="g-up" />
-      <line x1={cx} y1={cy} x2={nx} y2={ny} className="needle" />
+      {/* key 로 점수가 바뀔 때마다 바늘 연출을 다시 튼다. --from: 0점(위쪽)에서 출발하는 회전각 */}
+      <line key={score} x1={cx} y1={cy} x2={nx} y2={ny} className="needle"
+            style={{ "--from": `${-Math.max(-1, Math.min(1, score)) * 90}deg` } as React.CSSProperties} />
       <circle cx={cx} cy={cy} r={5} className="hub" />
       <text x={22} y={110} className="axis">매도</text>
       <text x={178} y={110} className="axis" textAnchor="end">매수</text>

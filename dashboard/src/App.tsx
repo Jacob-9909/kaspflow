@@ -85,8 +85,11 @@ export default function App() {
     if (!replace) scrollTo({ top: 0 });
   }, []);
 
-  const nav = (v: View, label: string) => (
-    <button className={route.view === v ? "on" : ""} aria-current={route.view === v ? "page" : undefined} onClick={() => go({ view: v })}>{label}</button>
+  // 아이콘은 모바일 하단 막대에서만 보인다 (styles.css .nav-ico)
+  const nav = (v: View, label: string, icon: JSX.Element) => (
+    <button className={route.view === v ? "on" : ""} aria-current={route.view === v ? "page" : undefined} onClick={() => go({ view: v })}>
+      <svg className="nav-ico" viewBox="0 0 24 24" aria-hidden="true">{icon}</svg>{label}
+    </button>
   );
 
   return (
@@ -99,13 +102,14 @@ export default function App() {
         </button>
         <div className="topsearch"><Search onPick={(s) => go({ view: "symbol", symbol: s })} /></div>
         <nav className="topnav" aria-label="주 메뉴">
-          {nav("home", "분석")}
-          {nav("history", "판단 기록")}
-          {nav("method", "검증 방법")}
+          {nav("home", "분석", <path d="M5 20v-8M12 20V4M19 20v-5" />)}
+          {nav("history", "판단 기록", <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>)}
+          {nav("method", "검증 방법", <><path d="M12 3.5l7.5 2.8V12c0 4.2-3.2 7.6-7.5 8.5-4.3-.9-7.5-4.3-7.5-8.5V6.3z" /><path d="M8.8 12.2l2.2 2.2 4.2-4.4" /></>)}
           <button onClick={toggleTheme} aria-label={theme === "dark" ? "밝은 테마로" : "어두운 테마로"} className="icon">
             {theme === "dark"
               ? <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
               : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>}
+            <span className="nav-label">{theme === "dark" ? "밝게" : "어둡게"}</span>
           </button>
           {me?.authenticated && <button onClick={() => api.logout().then(refreshMe)}>로그아웃</button>}
         </nav>
