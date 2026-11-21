@@ -4,6 +4,7 @@ import type { Horizon, Result, StrategyResult } from "../api";
 import { GRADE_INFO, HORIZON_LABEL, date, dirClass, num, pct, signed, usd } from "../format";
 import { EquityChart, FootballField, Histogram } from "./Charts";
 import { Term } from "./Glossary";
+import { ModuleLead } from "./Report";
 import { MetaList } from "./ui";
 import { DivBars, FoldChart, Pips, SegBar, SentimentDots, ZoneScale } from "./Viz";
 
@@ -21,6 +22,11 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
   const rows = useMemo(() => [...v.strategies].sort((a, b) => b.weight - a.weight || (b.wf?.metrics.sharpe ?? -9) - (a.wf?.metrics.sharpe ?? -9)), [v]);
   const sel = v.strategies.find((s) => s.key === selected) ?? rows[0];
   const bh = v.buy_hold.oos;
+  // 검증을 통과하지 못한 전략은 접어 둔다 (판단에 쓰이지 않는다). 통과한 전략이 없으면 전부 보인다
+  const [all, setAll] = useState(false);
+  const failed = rows.filter((s) => s.weight <= 0).length;
+  const fold = failed > 0 && failed < rows.length;
+  const shown = all || !fold ? rows : rows.filter((s) => s.weight > 0 || s.key === sel?.key);
   // 판단 엔진과 같은 기준: 검증을 통과했고(가중치 > 0) 단타가 아닌 전략의 지금 신호를 등급 가중치로 센다 (backend/validation.py strategy_score)
   const used = v.strategies.filter((s) => s.weight > 0 && s.family !== "day");
   const vote = (sign: number) => used.filter((s) => Math.sign(s.current.vote) === sign);
@@ -31,8 +37,7 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
   return (
     <section className="card" id="sec-strategies" aria-labelledby="strat-title">
       <h2 id="strat-title">전략 검증 <span className="sub"><MetaList items={[`${v.start} ~ ${v.end}`, `${v.bars.toLocaleString()}봉`, `변형 ${v.n_trials}개`, `워크포워드 ${v.folds}구간`]} /></span></h2>
-      <p className="hint">숫자는 모두 표본 밖(OOS) 성과입니다. 직전 3년에서 고른 파라미터를 다음 1년에 그대로 써서 이어 붙였습니다. 체결은 다음 날 시가, 편도 비용 0.05%, 현금은 단기 국채 금리.
-        순열 p값 = 같은 보유 패턴을 무작위 시점에 둘 때 이만큼 나올 확률. DSR = 변형 {v.n_trials}개를 시험한 것을 감안한 샤프 신뢰도(기준 샤프 {num(v.sr0_annual, 2)}).</p>
+      <ModuleLead r={r} k="strategies" />
       <dl className="grade-legend" aria-label="검증 등급의 뜻">
         {GRADE_INFO.map(([g, meaning, use]) => (
           <div key={g}><dt><span className={`grade g-${g}`}>{g}</span></dt><dd>{meaning}<small>{use}</small></dd></div>
@@ -50,7 +55,7 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
             <tr><th>전략</th><th>검증 등급</th><th><Term k="OOS" /> <Term k="샤프" /></th><th>OOS 연수익</th><th><Term k="MDD">최대 낙폭</Term></th><th>거래</th><th>승률</th><th><Term k="p값" /></th><th><Term k="DSR" /></th><th>지금 신호</th></tr>
           </thead>
           <tbody>
-            {rows.map((s) => {
+            {shown.map((s) => {
               const m = s.wf?.metrics;
               return (
                 <tr key={s.key} className={`${s.key === sel?.key ? "on" : ""} clickable`} onClick={() => onSelect(s.key)} tabIndex={0}
@@ -78,6 +83,7 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
           </tbody>
         </table>
       </div>
+      {fold && <button className="btn outline" aria-expanded={all} onClick={() => setAll(!all)}>{all ? "통과한 전략만 보기" : `통과하지 못한 전략 ${failed}개 보기`}</button>}
       {sel && (
         <div className="strat-detail">
           <div>
@@ -87,14 +93,20 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
           </div>
           <dl className="kv">
             <div><dt>지금 쓰는 파라미터</dt><dd>{Object.entries(sel.current.params).map(([k, x]) => `${k}=${x}`).join(", ")}</dd></div>
-            {Object.entries(sel.current.levels).map(([k, x]) => <div key={k}><dt>{k}</dt><dd className="num">{x === null ? "-" : Math.abs(x) < 5 && !k.includes("SMA") ? num(x, 3) : num(x, 2)}</dd></div>)}
+            {Object.entries(sel.current.levels).map(([k, x]) => <div key={k}><dt>{k}</dt><dd className="num">{x === null ? "-" : Math.abs(x) >= 1e6 ? x.toLocaleString("en-US", { notation: "compact", maximumFractionDigits: 1 })
+              : Math.abs(x) < 5 && !k.includes("SMA") ? num(x, 3) : num(x, 2)}</dd></div>)}
             <div><dt>워크포워드 효율 (OOS/IS 샤프)</dt><dd className="num">{num(sel.wf?.efficiency, 2)}</dd></div>
             <div><dt>전 구간 최고 변형 (과최적화 주의)</dt><dd className="num">샤프 {num(sel.best_full.metrics.sharpe, 2)}, {Object.entries(sel.best_full.params).map(([k, x]) => `${k}=${x}`).join(", ")}</dd></div>
             {sel.mc && <div><dt>거래 재표본 1,000회</dt><dd className="num">수익 5%/50%/95% {pct(sel.mc.ret_p5, 0)} / {pct(sel.mc.ret_p50, 0)} / {pct(sel.mc.ret_p95, 0)}, 낙폭 5% {pct(sel.mc.mdd_p5, 0)}</dd></div>}
           </dl>
         </div>
       )}
-      <p className="hint">검증 등급은 전략의 과거 성과가 우연이 아닌지를 매깁니다. 등급별 기준 숫자는 '검증 방법' 페이지에 있습니다. 가격 차트의 화살표는 선택한 전략의 최근 2년 매매입니다.</p>
+      <details>
+        <summary>검증 방법</summary>
+        <p className="hint">숫자는 모두 표본 밖(OOS) 성과입니다. 직전 3년에서 고른 파라미터를 다음 1년에 그대로 써서 이어 붙였습니다. 체결은 다음 날 시가, 편도 비용 0.05%, 현금은 단기 국채 금리.
+          순열 p값 = 같은 보유 패턴을 무작위 시점에 둘 때 이만큼 나올 확률. DSR = 변형 {v.n_trials}개를 시험한 것을 감안한 샤프 신뢰도(기준 샤프 {num(v.sr0_annual, 2)}).</p>
+        <p className="hint">검증 등급은 전략의 과거 성과가 우연이 아닌지를 매깁니다. 등급별 기준 숫자는 '검증 방법' 페이지에 있습니다. 가격 차트의 화살표는 선택한 전략의 최근 2년 매매입니다.</p>
+      </details>
     </section>
   );
 }
@@ -115,7 +127,8 @@ export function Valuation({ r }: { r: Result }) {
   };
   return (
     <section className="card" id="sec-valuation" aria-labelledby="val-title">
-      <h2 id="val-title">가치평가 <span className="sub">{v.summary}</span></h2>
+      <h2 id="val-title">가치평가</h2>
+      <ModuleLead r={r} k="valuation" />
       <FootballField rows={v.football_field} price={r.quote.price} />
       <div className="two-col">
         {d && (
@@ -133,8 +146,7 @@ export function Valuation({ r }: { r: Result }) {
               { key: "dcf", label: "DCF 가정 (1~5년)", value: d.growth },
               { key: "implied", label: "현재가에 담긴 성장률", value: d.implied_growth },
             ]} />
-            <p className="hint">현재가에 담긴 성장률이 DCF 가정보다 높으면 시장이 그만큼 높은 성장을 이미 값에 넣었다는 뜻입니다.
-              성장률 근거: {d.growth_sources.join(", ") || "-"} (중앙값, -5%~30% 제한). 주식보상(SBC)은 비용으로 뺐습니다.</p>
+            <p className="hint">현재가에 담긴 성장률이 DCF 가정보다 높으면 시장이 그만큼 높은 성장을 이미 값에 넣었다는 뜻입니다.</p>
             <table className="table compact sens">
               <caption>민감도: WACC × 영구성장률 (주당 가치). 빨강은 현재가보다 높음, 파랑은 낮음</caption>
               <thead><tr><th>WACC \ g</th>{d.sensitivity.g_term.map((g) => <th key={g}>{pct(g, 1, false)}</th>)}</tr></thead>
@@ -153,11 +165,32 @@ export function Valuation({ r }: { r: Result }) {
             {MULT.filter(([k]) => typeof mult[k] === "number").map(([k, label, f]) => <div key={k}><dt>{label}</dt><dd className="num">{f(mult[k] as number)}</dd></div>)}
           </dl>
           {v.notes?.map((n) => <p key={n} className="hint warn">{n}</p>)}
-          <p className="hint">적정가 = DCF 50%, PEG 30%, 그레이엄 공식 20% 가중. EPV(무성장)와 그레이엄 넘버는 보수적 하한으로만 표시합니다.</p>
+          <details>
+            <summary>계산 방법</summary>
+            <p className="hint">적정가 = DCF 50%, PEG 30%, 그레이엄 공식 20% 가중. EPV(무성장)와 그레이엄 넘버는 보수적 하한으로만 표시합니다.</p>
+            {d && <p className="hint">DCF 성장률 근거: {d.growth_sources.join(", ") || "-"} (중앙값, -5%~30% 제한). 주식보상(SBC)은 비용으로 뺐습니다.</p>}
+          </details>
         </div>
       </div>
     </section>
   );
+}
+
+/** 핵심 지표를 묶음별로 (backend/fundamentals.py 의 facts 키). 저장된 결과는 키 순서가 섞여 오므로 여기서 순서를 정한다.
+ *  어느 묶음에도 없는 키는 '기타' 로 모은다. 섹터/산업은 종목 머리에 이미 있어 뺀다. */
+const FACT_GROUPS: [string, string[]][] = [
+  ["수익성", ["영업이익률", "순이익률", "매출총이익률", "ROE", "ROIC"]],
+  ["성장과 투자", ["매출 3년 CAGR", "EPS 3년 CAGR", "R&D/매출", "설비투자/매출"]],
+  ["재무 건전성", ["부채비율(D/E)", "유동비율", "이자보상배율", "순현금"]],
+  ["현금과 주주", ["FCF(최근 연도)", "FCF 수익률", "오너 어닝 수익률", "배당수익률", "주식 수 변화(1년)", "주식보상/매출"]],
+  ["가격 배수", ["PER", "선행 PER", "PEG", "PBR", "PSR", "EV/EBITDA"]],
+  ["규모와 주당 값", ["시가총액", "매출(최근 연도)", "EPS(TTM)", "선행 EPS", "BPS"]],
+];
+function factGroups(facts: Record<string, string>): [string, [string, string][]][] {
+  const known = new Set(FACT_GROUPS.flatMap(([, ks]) => ks).concat("섹터/산업"));
+  const rest = Object.entries(facts).filter(([k]) => !known.has(k));
+  return [...FACT_GROUPS.map(([name, ks]) => [name, ks.filter((k) => k in facts).map((k) => [k, facts[k]])] as [string, [string, string][]]),
+    ["기타", rest] as [string, [string, string][]]].filter(([, rows]) => rows.length > 0);
 }
 
 export function Fundamentals({ r }: { r: Result }) {
@@ -167,9 +200,10 @@ export function Fundamentals({ r }: { r: Result }) {
   return (
     <section className="card" id="sec-fundamentals" aria-labelledby="fund-title">
       <h2 id="fund-title">재무 품질과 애널리스트</h2>
-      <div className="three-col">
+      <div className="two-col">
         <div>
-          <h3>품질 점수</h3>
+          <h3>재무 품질</h3>
+          <ModuleLead r={r} k="quality" />
           <DivBars label="재무 품질 항목별 점수" max={1} fmt={(x) => signed(x * 100, 0)}
                    rows={Object.entries(q.groups).map(([k, x]) => ({ key: k, label: k, value: x }))} />
           {q.altman_z !== null && (
@@ -188,12 +222,8 @@ export function Fundamentals({ r }: { r: Result }) {
           )}
         </div>
         <div>
-          <h3>핵심 지표</h3>
-          <dl className="kv dense">{Object.entries(facts).map(([k, x]) => <div key={k}><dt>{k}</dt><dd className="num">{x}</dd></div>)}</dl>
-        </div>
-        <div>
           <h3>애널리스트 컨센서스</h3>
-          <p>{c.summary}</p>
+          <ModuleLead r={r} k="consensus" />
           {typeof detail.rec_mean === "number" && (
             <div className="viz-block">
               <ZoneScale label={`평균 의견${typeof detail.analysts === "number" ? ` (${detail.analysts}명)` : ""}`} value={detail.rec_mean} min={1} max={5} fmt={(x) => num(x, 1)}
@@ -218,6 +248,15 @@ export function Fundamentals({ r }: { r: Result }) {
           )}
         </div>
       </div>
+      <h3 className="viz-title">핵심 지표</h3>
+      <div className="fact-groups">
+        {factGroups(facts).map(([name, rows]) => (
+          <dl key={name} className="facts">
+            <dt className="facts-name">{name}</dt>
+            {rows.map(([k, x]) => <div key={k}><dt>{k}</dt><dd className="num">{x}</dd></div>)}
+          </dl>
+        ))}
+      </div>
     </section>
   );
 }
@@ -230,9 +269,10 @@ export function Personas({ r }: { r: Result }) {
   if (!members.length) return null;
   return (
     <section id="sec-personas" aria-labelledby="persona-title">
-      <h2 id="persona-title" className="section-title">투자 대가 패널 <span className="sub">{r.personas.summary}</span></h2>
+      <h2 id="persona-title" className="section-title">투자 대가 패널</h2>
       {r.personas.error && <p className="hint warn">{r.personas.error}</p>}
       <div className="card viz-block">
+        <ModuleLead r={r} k="personas" />
         <h3>대가별 점수 <span className="sub">-100 매도 쪽 ~ +100 매수 쪽, 체크리스트 50% + AI 의견 50%</span></h3>
         <DivBars label="투자 대가별 점수" max={1} fmt={(x) => signed(x * 100, 0)}
                  rows={members.map(([k, p]) => ({
@@ -251,16 +291,16 @@ export function Personas({ r }: { r: Result }) {
                 <span className={`num score ${dirClass(p.score)}`}>{p.score === null ? "-" : signed(p.score * 100, 0)}</span>
               </header>
               {p.view ? (
-                <>
-                  <p className="thesis"><span className={`tag ${sig?.[1]}`}>{sig?.[0]} {p.view.confidence}</span> {p.view.thesis}</p>
+                <p className="thesis"><span className={`tag ${sig?.[1]}`}>{sig?.[0]} {p.view.confidence}</span> {p.view.thesis}</p>
+              ) : <p className="hint">AI 의견 없음 (체크리스트 점수만 사용{p.error ? `: ${p.error}` : ""})</p>}
+              <details>
+                <summary>근거와 체크리스트 ({passed}/{avail} 통과)</summary>
+                {p.view && (
                   <div className="pn">
                     <ul className="plus">{p.view.positives.map((x) => <li key={x}>{x}</li>)}</ul>
                     <ul className="minus">{p.view.negatives.map((x) => <li key={x}>{x}</li>)}</ul>
                   </div>
-                </>
-              ) : <p className="hint">AI 의견 없음 (체크리스트 점수만 사용{p.error ? `: ${p.error}` : ""})</p>}
-              <details>
-                <summary>체크리스트 {passed}/{avail} 통과</summary>
+                )}
                 <ul className="checks">{p.checklist.map((c) => <li key={c.name} className={c.pass === null ? "na" : c.pass ? "pass" : "fail"}>{c.name}{c.value ? ` (${c.value})` : ""}</li>)}</ul>
               </details>
             </article>
@@ -281,7 +321,8 @@ export function News({ r }: { r: Result }) {
   const shown = (all ? items : items.filter((x) => (x.relevance ?? 1) >= 0.5)).slice(0, all ? 40 : 15);
   return (
     <section className="card" id="sec-news" aria-labelledby="news-title">
-      <h2 id="news-title">뉴스 감성 <span className="sub">{a.summary}</span></h2>
+      <h2 id="news-title">뉴스 감성</h2>
+      <ModuleLead r={r} k="sentiment" />
       {error && <p className="hint warn">{error}</p>}
       {a.available && (
         <div className="viz-grid news-viz">
@@ -316,7 +357,7 @@ export function Analogs({ r, horizon }: { r: Result; horizon: Horizon }) {
   return (
     <section className="card" aria-labelledby="analog-title">
       <h2 id="analog-title">과거 유사 국면 <span className="sub">{HORIZON_LABEL[horizon]}</span></h2>
-      <p>{a.summary}</p>
+      <ModuleLead r={r} k="analogs" m={a} />
       {a.available && a.hist && (
         <>
           <Histogram counts={a.hist.counts} edges={a.hist.edges} />
@@ -326,7 +367,8 @@ export function Analogs({ r, horizon }: { r: Result; horizon: Horizon }) {
             <DivBars label="오른 비율 비교" neutral max={1} fmt={(x) => pct(x, 0, false)} rows={[
               { key: "a", label: "유사 국면 오른 비율", value: a.hit_rate ?? null }, { key: "b", label: "전체 오른 비율", value: a.base_hit_rate ?? null }]} />
           </div>
-          <p className="hint">표본 {a.n}일 (겹침을 감안한 유효 표본 {a.n_eff}), 평균 {pct(a.mean)} vs 전체 {pct(a.base_mean)}, t = {num(a.t_stat, 2)}. |t| 가 2 미만이면 우연과 구별하기 어렵습니다.</p>
+          <p className="hint">표본 {a.n}일 (겹침을 감안한 유효 표본 {a.n_eff}), t = {num(a.t_stat, 2)}.
+            {Math.abs(a.t_stat ?? 0) < 2 ? " 전체 평균과의 차이를 우연과 구별하기 어렵습니다." : " 전체 평균과의 차이를 우연으로 보기 어렵습니다."}</p>
         </>
       )}
     </section>

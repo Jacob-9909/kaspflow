@@ -73,13 +73,32 @@ const GROUPS = [
 ] as const;
 
 /** 모듈 점수를 그 모듈의 말로: [매도 쪽, 중립, 매수 쪽]. 경계는 판단 엔진과 같은 ±0.15 */
-const SIGNAL_WORD: Record<string, [string, string, string]> = {
+export const SIGNAL_WORD: Record<string, [string, string, string]> = {
   valuation: ["고평가", "적정", "저평가"], quality: ["약함", "보통", "탄탄"], consensus: ["부정적", "중립", "긍정적"],
   personas: ["부정적", "엇갈림", "긍정적"], technical: ["약세", "중립", "강세"], strategies: ["매도 신호", "신호 없음", "매수 신호"],
   analogs: ["약했음", "평소와 비슷", "강했음"], sentiment: ["부정적", "잠잠", "긍정적"], regime: ["불안", "보통", "우호적"],
 };
 const level = (s: number) => (s >= BUY_TH ? 2 : s <= -BUY_TH ? 0 : 1);
 const LEVEL_CLS = ["down", "flat", "up"] as const;
+
+/** 탭 머리의 결론: 그 모듈의 말(저평가, 약세 등)을 크게, 0 기준 막대와 점수, 아래에 요약 한 문단.
+ *  요약 탭 '지금 상황' 과 같은 말을 쓴다. m 을 주면 모듈 카드 대신 그 값을 쓴다 (기간마다 다른 유사 국면). */
+export function ModuleLead({ r, k, m, title }: { r: Result; k: string; m?: { available: boolean; score: number; summary: string }; title?: string }) {
+  const x = m ?? r.modules.find((c) => c.key === k);
+  if (!x) return null;
+  const lv = level(x.score), cls = x.available ? LEVEL_CLS[lv] : "flat";
+  return (
+    <div className="lead">
+      <div className="lead-top">
+        {title && <span className="lead-title">{title}</span>}
+        <b className={`lead-word ${cls}`}>{x.available ? SIGNAL_WORD[k]?.[lv] : "데이터 없음"}</b>
+        <ScoreBar score={x.score} muted={!x.available} />
+        <span className={`num lead-score ${cls}`}>{x.available ? signed(x.score * 100, 0) : "-"}</span>
+      </div>
+      <p>{x.summary}</p>
+    </div>
+  );
+}
 
 /** 묶음 점수: 모듈 점수를 신뢰도로 가중 평균한다 (기간 가중치와 무관한 '지금 상황'). 쓸 수 있는 모듈이 없으면 null */
 function groupScore(mods: ModuleCard[]): number | null {
@@ -273,8 +292,11 @@ export function PlanCard({ r, horizon }: { r: Result; horizon: Horizon }) {
         </div>
         <div>
           <FanChart fan={s.fan} days={s[horizon].days} price={p.entry} stop={p.stop} target={p.target} />
-          <p className="hint">손절과 목표 = <Term k="ATR" />({num(p.atr, 2)}) × {p.atr_mult[0]} / {p.atr_mult[1]}. 비중은 1회 손실을 계좌의 1%로 묶는 기준(최대 25%).
-            경로 {r.simulation.paths.toLocaleString()}개, 최근 3년 수익률 블록 부트스트랩. 기대수익은 CAPM {pct(r.simulation.drift)} 로 맞춤(과거 추세를 미래로 늘리지 않음).</p>
+          <details>
+            <summary>계산 방법</summary>
+            <p className="hint">손절과 목표 = <Term k="ATR" />({num(p.atr, 2)}) × {p.atr_mult[0]} / {p.atr_mult[1]}. 비중은 1회 손실을 계좌의 1%로 묶는 기준(최대 25%).
+              경로 {r.simulation.paths.toLocaleString()}개, 최근 3년 수익률 블록 부트스트랩. 기대수익은 CAPM {pct(r.simulation.drift)} 로 맞춤(과거 추세를 미래로 늘리지 않음).</p>
+          </details>
         </div>
       </div>
       <h3>기간별 수익률 범위</h3>
@@ -330,6 +352,10 @@ export function TrendCard({ r }: { r: Result }) {
     <section className="card">
       <h2>추세와 시장 국면</h2>
       <div className="viz-grid">
+        <ModuleLead r={r} k="technical" title="기술적 지표" />
+        <ModuleLead r={r} k="regime" title="시장 국면" />
+      </div>
+      <div className="viz-grid">
         <div>
           <h3>기간별 수익률</h3>
           <DivBars label="기간별 수익률" fmt={(x) => pct(x)} max={Math.max(0.1, ...rets.map((x) => Math.abs(x.value ?? 0)))} rows={rets} />
@@ -343,8 +369,6 @@ export function TrendCard({ r }: { r: Result }) {
                                     zones={[{ to: 15, label: "안정" }, { to: 25, label: "보통" }, { to: 35, label: "불안" }, { to: 50, label: "공포" }]} />}
         </div>
       </div>
-      <p className="hint">{r.technical.summary}</p>
-      <p className="hint">{r.regime.summary}</p>
       {lv.length > 0 && (
         <>
           <h3>주요 가격대</h3>
