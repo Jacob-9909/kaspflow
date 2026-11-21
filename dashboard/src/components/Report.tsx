@@ -26,6 +26,7 @@ export function VerdictHero({ r, horizon, onHorizon }: { r: Result; horizon: Hor
         <p className="verdict-summary">{r.narrative.summary}</p>
         <div className={`advice${r.advice.holding ? " holding" : ""}`}>
           <span className="advice-tag">{r.advice.holding ? `보유 중, 평가손익 ${pct(r.advice.pnl)}` : "미보유 기준"}</span>
+          {r.advice.action && <b className="advice-action">{r.advice.action}</b>}
           <p>{r.advice.text}</p>
         </div>
       </div>

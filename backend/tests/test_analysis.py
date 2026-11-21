@@ -125,6 +125,25 @@ class TestVerdict(unittest.TestCase):
         b = vd.combine(self.mods(0.5), "short", {"vol_1y": 0.2}, 3)["confidence"]
         self.assertLess(b, a)
 
+    def test_advice_follows_other_horizons(self):
+        plan = {"entry": 100.0, "stop": 80.0, "target": 140.0, "stop_pct": -0.2, "target_pct": 0.4, "max_weight": 0.05}
+        levels = {"200일선": 130.0, "20일선": 104.0, "20일 최저": 95.0}
+        v = lambda h, x: {"horizon": h, "verdict": x}
+        mixed = {"short": v("short", "sell"), "mid": v("mid", "hold"), "long": v("long", "buy")}
+        a = vd.advice(mixed["long"], None, 100.0, plan, mixed, levels)   # 장기 매수인데 단기 매도: 나눠 사라
+        self.assertEqual(a["action"], "나눠서 매수")
+        self.assertIn("단기 1개월 판단은 매도", a["text"])
+        self.assertIn("손절 $80.00(-20.0%)", a["text"])
+        a = vd.advice(mixed["short"], None, 100.0, plan, mixed, levels)  # 단기 매도인데 장기 매수: 200일선 회복을 본다
+        self.assertEqual(a["action"], "사지 않기")
+        self.assertIn("종가가 200일선 $130.00 위로 올라서는지", a["text"])
+        a = vd.advice(mixed["mid"], None, 100.0, plan, mixed, levels)    # 관망: 바로 위와 아래 가격대
+        self.assertEqual(a["action"], "지켜보기")
+        self.assertIn("20일선 $104.00 위로 올라서면 매수 쪽으로, 20일 최저 $95.00 아래로 내려가면 매도 쪽으로", a["text"])
+        self.assertEqual(vd.advice(v("mid", "buy"), None, 100.0, plan)["action"], "매수 고려")  # 다른 기간을 모르면 기본 문장
+        held = vd.advice(mixed["short"], {"qty": 3, "avg_price": 80.0}, 100.0, plan, mixed, levels)
+        self.assertEqual((held["action"], held["holding"], held["pnl"]), ("비중 줄이기", True, 0.25))
+
     def test_tidy_summary_drops_other_verdicts(self):
         s = "적정가가 현재가를 크게 웃돌아 매도 판단이 섭니다. 재무 건전성은 반대 근거입니다. 200일선 회복을 지켜봅니다."
         self.assertEqual(vd.tidy_summary(s, "관망"), "재무 건전성은 반대 근거입니다. 200일선 회복을 지켜봅니다.")
