@@ -127,7 +127,7 @@ function WeightsCard({ authed }: { authed: boolean }) {
             {HORIZONS.map((h) => <td key={h} className="num">{p(cur[h][k])}{p(cur[h][k]) !== p(def[h][k]) && <small className="w-def"> 기본 {p(def[h][k])}</small>}</td>)}</tr>
         ))}</tbody>
       </table>
-      <p className="hint">단기는 가격 흐름과 뉴스, 장기는 가치와 재무 품질이 판단을 이끈다. 서버가 {w?.rules.every_days ?? 28}일마다 백테스트와 기간이 지난 실제 판단 기록으로
+      <p className="hint">단기는 가격 흐름과 뉴스, 장기는 가치와 재무 품질이 판단을 이끈다. 서버가 {w?.rules.every_days ?? 7}일마다 백테스트와 기간이 지난 실제 판단 기록으로
         가중치를 다시 계산한다. 모듈 신호와 그 뒤 수익률의 순위 상관(IC)이 높은 모듈에 더 주고, 표본이 적으면 기본값 쪽으로 붙잡는다.
         앞 {pct(w?.rules.split ?? 0.7, 0, false)} 기간으로 고른 값이 뒤 기간에서 기본값보다 나을 때만 바꾸고, 실제 기록이 기간마다 독립 표본 {w?.rules.min_live ?? 60}개를
         넘기 전에는 기술적 지표, 과거 유사 국면, 시장 국면 셋끼리만 비중을 나눈다.</p>

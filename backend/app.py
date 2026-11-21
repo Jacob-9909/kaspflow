@@ -52,7 +52,7 @@ MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_RUNS", "2"))
 NY = ZoneInfo("America/New_York")
 AUTORUN_AT = (16, 40)   # 관심 종목 자동 판단 시각 (뉴욕). 16:00 장 마감 뒤 일봉이 확정되고 나서
 WATCH_MAX = int(os.environ.get("WATCHLIST_MAX", "10"))   # 하루 NIM 호출 = 종목 수 x 9
-TUNE_EVERY = timedelta(days=28)   # 가중치 자동 조정 주기 (약 한 달)
+TUNE_EVERY = timedelta(days=7)    # 가중치 자동 조정 주기 (한 주). 결과는 그때의 데이터만으로 정해져 자주 돌려도 조정이 쌓이지 않는다
 
 
 class State:
