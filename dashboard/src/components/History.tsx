@@ -6,16 +6,11 @@ import Search from "./Search";
 import { Chevron } from "./ui";
 
 const POPULAR = ["NVDA", "AAPL", "MSFT", "TSLA", "AMZN", "GOOGL", "META", "AMD", "PLTR", "SPY", "QQQ", "BTC-USD"];
-const MODULE_INFO: [string, string][] = [
-  ["기술적 지표", "추세(50일선, 200일선, ADX), 모멘텀, 상대강도, RSI, MACD"],
-  ["검증된 전략 신호", "11개 전략 30개 변형을 워크포워드, 순열 검정, DSR 로 검증하고 통과한 것만 투표"],
-  ["과거 유사 국면", "지금과 같은 추세, 모멘텀, RSI 구간이었던 날들의 이후 수익률"],
-  ["몬테카를로", "2,000개 가격 경로로 범위, 손절과 목표 도달 확률, 비중"],
-  ["밸류에이션", "DCF, 역DCF, PEG, 그레이엄, EPV, WACC 민감도"],
-  ["재무 품질", "수익성, 성장성, 건전성, 피오트로스키 F, 알트만 Z"],
-  ["애널리스트", "투자의견, 목표가 괴리, EPS 추정치 상향과 하향"],
-  ["뉴스 감성", "최근 3주 기사를 NIM 으로 분류해 시간 가중"],
-  ["투자 대가 6인", "버핏, 그레이엄, 린치, 멍거, 캐시 우드, 드러켄밀러 관점"],
+/** 무엇을 따져 보는지: 요약 화면의 '지금 상황' 과 같은 두 축(회사, 타이밍) + 시뮬레이션 */
+const LOOKS: [string, string, string][] = [
+  ["회사", "무엇을 사는가", "가치평가(DCF, PEG, 그레이엄), 재무 품질, 애널리스트 의견, 투자 대가 6인의 관점"],
+  ["타이밍", "언제 사는가", "추세와 과열 정도, 통계 검증을 통과한 매매 전략, 과거 비슷했던 때, 뉴스, 시장 분위기"],
+  ["시뮬레이션", "얼마나 흔들리나", "가격 경로 2,000개로 본 예상 범위, 손절가와 목표가, 한 번에 살 수 있는 비중"],
 ];
 
 export function RunsTable({ data, onOpen, compact = false }: { data: RunsResponse; onOpen: (id: string) => void; compact?: boolean }) {
@@ -103,18 +98,18 @@ export function Home({ authed, onPick, onOpen }: { authed: boolean; onPick: (s: 
     <div className="home">
       <section className="hero">
         <h1>지금 사야 할까, 팔아야 할까, 기다려야 할까</h1>
-        <p>미국 주식 하나를 고르면 기술적 신호부터 전략 백테스트의 통계 검증, 몬테카를로 시뮬레이션, 가치평가, 뉴스, 투자 대가 관점까지 한 번에 돌려 기간별 판단을 냅니다.</p>
+        <p>미국 주식 하나를 고르면 지금 어떤 상황인지 따져 보고, 1개월, 3개월, 1년 기준으로 매수, 관망, 매도 중 하나를 근거와 함께 알려 줍니다.</p>
         <Search onPick={onPick} big autoFocus />
         <div className="chips">{POPULAR.map((s) => <button key={s} className="chip" onClick={() => onPick(s)}>{s}</button>)}</div>
       </section>
       <Watchlist authed={authed} onPick={onPick} onOpen={onOpen} />
-      <section className="modules-info" aria-labelledby="modules-title">
-        <h2 id="modules-title" className="sr-only">검증 항목</h2>
-        {MODULE_INFO.map(([t, d]) => <div key={t} className="card mini"><h3>{t}</h3><p>{d}</p></div>)}
-      </section>
       <section className="card">
-        <h2>최근 판단 <span className="sub">판단 뒤 기간이 지나면 midas-touch 판단 원장과 같은 기준으로 적중을 매깁니다 (매수 +2% 초과, 매도 -2% 미만, 관망 ±5% 이내)</span></h2>
+        <h2>최근 판단 <span className="sub">기간이 지나면 실제 수익률로 적중을 매깁니다</span></h2>
         {data ? <><Stats data={data} /><RunsTable data={{ ...data, runs: data.runs.slice(0, 10) }} onOpen={onOpen} compact /></> : <p className="hint">불러오는 중…</p>}
+      </section>
+      <section className="modules-info" aria-labelledby="modules-title">
+        <h2 id="modules-title" className="sr-only">무엇을 따져 보나</h2>
+        {LOOKS.map(([t, q, d]) => <div key={t} className="card mini"><h3>{t} <span className="sub">{q}</span></h3><p>{d}</p></div>)}
       </section>
     </div>
   );
@@ -127,6 +122,7 @@ export function History({ onOpen }: { onOpen: (id: string) => void }) {
   return (
     <section className="card">
       <h2>판단 기록과 적중률</h2>
+      <p className="hint">판단 기간이 지나면 실제 수익률로 적중을 매깁니다. 매수는 +2% 초과, 매도는 -2% 미만, 관망은 ±5% 이내면 적중입니다 (midas-touch 판단 원장과 같은 기준).</p>
       {err && <p className="field-error" role="alert">기록을 불러오지 못했습니다: {err}</p>}
       {data ? <><Stats data={data} /><RunsTable data={data} onOpen={onOpen} /></> : !err && <p className="hint">불러오는 중…</p>}
     </section>
