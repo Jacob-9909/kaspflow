@@ -5,6 +5,7 @@ import { GRADE_INFO, HORIZON_LABEL, date, dirClass, num, pct, signed, usd } from
 import { EquityChart, FootballField, Histogram } from "./Charts";
 import { Term } from "./Glossary";
 import { MetaList } from "./ui";
+import { DivBars, FoldChart, Pips, SegBar, SentimentDots, ZoneScale } from "./Viz";
 
 const FAMILY: Record<string, string> = { trend: "추세", reversion: "역추세", day: "단타" };
 
@@ -20,6 +21,13 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
   const rows = useMemo(() => [...v.strategies].sort((a, b) => b.weight - a.weight || (b.wf?.metrics.sharpe ?? -9) - (a.wf?.metrics.sharpe ?? -9)), [v]);
   const sel = v.strategies.find((s) => s.key === selected) ?? rows[0];
   const bh = v.buy_hold.oos;
+  // 판단 엔진과 같은 기준: 검증을 통과했고(가중치 > 0) 단타가 아닌 전략의 지금 신호를 등급 가중치로 센다 (backend/validation.py strategy_score)
+  const used = v.strategies.filter((s) => s.weight > 0 && s.family !== "day");
+  const vote = (sign: number) => used.filter((s) => Math.sign(s.current.vote) === sign);
+  const part = (key: string, label: string, sign: number, tone: "up" | "down" | "flat") => {
+    const xs = vote(sign);
+    return { key, label: `${label} ${xs.length}개`, value: xs.reduce((a, s) => a + s.weight, 0), tone, note: xs.map((s) => `${s.label}(${s.grade})`).join(", ") };
+  };
   return (
     <section className="card" id="sec-strategies" aria-labelledby="strat-title">
       <h2 id="strat-title">전략 검증 <span className="sub"><MetaList items={[`${v.start} ~ ${v.end}`, `${v.bars.toLocaleString()}봉`, `변형 ${v.n_trials}개`, `워크포워드 ${v.folds}구간`]} /></span></h2>
@@ -30,6 +38,12 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
           <div key={g}><dt><span className={`grade g-${g}`}>{g}</span></dt><dd>{meaning}<small>{use}</small></dd></div>
         ))}
       </dl>
+      {used.length > 0 && (
+        <div className="viz-block">
+          <SegBar label={`검증을 통과한 전략 ${used.length}개의 지금 신호 (등급 가중치로 센 몫)`}
+                  parts={[part("cash", "현금", -1, "down"), part("flat", "신호 없음", 0, "flat"), part("hold", "보유", 1, "up")]} />
+        </div>
+      )}
       <div className="table-wrap">
         <table className="table">
           <thead>
@@ -69,6 +83,7 @@ export function Strategies({ r, selected, onSelect, theme }: { r: Result; select
           <div>
             <h3>{sel.label} <span className="sub">{sel.rule}</span></h3>
             {sel.wf ? <EquityChart a={sel.wf.equity} b={sel.wf.bh_equity} aLabel={sel.label} bLabel="단순 보유" theme={theme} /> : <p className="hint">워크포워드에 쓸 기록이 부족합니다.</p>}
+            {sel.wf && sel.wf.folds.length > 1 && <FoldChart folds={sel.wf.folds} />}
           </div>
           <dl className="kv">
             <div><dt>지금 쓰는 파라미터</dt><dd>{Object.entries(sel.current.params).map(([k, x]) => `${k}=${x}`).join(", ")}</dd></div>
@@ -93,6 +108,11 @@ export function Valuation({ r }: { r: Result }) {
     ["peg", "PEG", (x) => num(x, 2)], ["pb", "PBR", (x) => `${num(x, 1)}배`], ["ps", "PSR", (x) => `${num(x, 1)}배`],
     ["ev_ebitda", "EV/EBITDA", (x) => `${num(x, 1)}배`], ["fcf_yield", "FCF 수익률", (x) => pct(x)], ["earnings_yield", "이익수익률(EBIT/EV)", (x) => pct(x)],
     ["dividend_yield", "배당수익률", (x) => pct(x, 2, false)]];
+  // 민감도 칸 바탕: 현재가보다 높으면 빨강(저평가 쪽), 낮으면 파랑. 차이 50% 에서 가장 진하다
+  const heat = (x: number) => {
+    const d = x / r.quote.price - 1;
+    return { background: `color-mix(in oklab, var(${d >= 0 ? "--up" : "--down"}) ${Math.round(Math.min(Math.abs(d), 0.5) / 0.5 * 26)}%, transparent)` };
+  };
   return (
     <section className="card" id="sec-valuation" aria-labelledby="val-title">
       <h2 id="val-title">가치평가 <span className="sub">{v.summary}</span></h2>
@@ -108,14 +128,20 @@ export function Valuation({ r }: { r: Result }) {
               <div><dt>현재가가 가정하는 성장률 (<Term k="역DCF" />)</dt><dd className={`num ${d.implied_growth > d.growth ? "down" : "up"}`}>{pct(d.implied_growth)}</dd></div>
               <div><dt>터미널 가치 비중</dt><dd className="num">{pct(d.tv_share, 0, false)}</dd></div>
             </dl>
-            <p className="hint">성장률 근거: {d.growth_sources.join(", ") || "-"} (중앙값, -5%~30% 제한). 주식보상(SBC)은 비용으로 뺐습니다.</p>
+            <h3 className="viz-title">성장률 비교</h3>
+            <DivBars label="성장률 비교" neutral fmt={(x) => pct(x)} rows={[
+              { key: "dcf", label: "DCF 가정 (1~5년)", value: d.growth },
+              { key: "implied", label: "현재가에 담긴 성장률", value: d.implied_growth },
+            ]} />
+            <p className="hint">현재가에 담긴 성장률이 DCF 가정보다 높으면 시장이 그만큼 높은 성장을 이미 값에 넣었다는 뜻입니다.
+              성장률 근거: {d.growth_sources.join(", ") || "-"} (중앙값, -5%~30% 제한). 주식보상(SBC)은 비용으로 뺐습니다.</p>
             <table className="table compact sens">
-              <caption>민감도: WACC × 영구성장률 (주당 가치)</caption>
+              <caption>민감도: WACC × 영구성장률 (주당 가치). 빨강은 현재가보다 높음, 파랑은 낮음</caption>
               <thead><tr><th>WACC \ g</th>{d.sensitivity.g_term.map((g) => <th key={g}>{pct(g, 1, false)}</th>)}</tr></thead>
               <tbody>
                 {d.sensitivity.values.map((row, i) => (
                   <tr key={i}><th scope="row">{pct(d.sensitivity.wacc[i], 1, false)}</th>
-                    {row.map((x, j) => <td key={j} className={`num ${x >= r.quote.price ? "up" : "down"}${i === 1 && j === 1 ? " base" : ""}`}>{usd(x)}</td>)}</tr>
+                    {row.map((x, j) => <td key={j} className={`num heat${i === 1 && j === 1 ? " base" : ""}`} style={heat(x)}>{usd(x)}</td>)}</tr>
                 ))}
               </tbody>
             </table>
@@ -144,15 +170,17 @@ export function Fundamentals({ r }: { r: Result }) {
       <div className="three-col">
         <div>
           <h3>품질 점수</h3>
-          <ul className="bars">
-            {Object.entries(q.groups).map(([k, x]) => (
-              <li key={k}><span>{k}</span><span className={`num ${dirClass(x)}`}>{signed(x * 100, 0)}</span></li>
-            ))}
-          </ul>
-          {q.altman_z !== null && <p className="hint"><Term k="알트만Z">알트만 Z</Term> {num(q.altman_z, 2)} ({q.altman_z > 2.99 ? "안전" : q.altman_z > 1.81 ? "회색 지대" : "부실 위험"})</p>}
+          <DivBars label="재무 품질 항목별 점수" max={1} fmt={(x) => signed(x * 100, 0)}
+                   rows={Object.entries(q.groups).map(([k, x]) => ({ key: k, label: k, value: x }))} />
+          {q.altman_z !== null && (
+            <div className="viz-block">
+              <ZoneScale label="알트만 Z (파산 위험)" value={q.altman_z} min={0} max={6} fmt={(x) => num(x, 2)}
+                         zones={[{ to: 1.81, label: "부실 위험" }, { to: 2.99, label: "회색 지대" }, { to: 6, label: "안전" }]} />
+            </div>
+          )}
           {q.piotroski && (
             <>
-              <h3><Term k="피오트로스키">피오트로스키 F-점수</Term> {q.piotroski.score}/{q.piotroski.max}</h3>
+              <h3><Term k="피오트로스키">피오트로스키 F-점수</Term> {q.piotroski.score}/{q.piotroski.max}<Pips checks={q.piotroski.checks} /></h3>
               <ul className="checks">
                 {q.piotroski.checks.map((x) => <li key={x.name} className={x.pass === null ? "na" : x.pass ? "pass" : "fail"}>{x.name}</li>)}
               </ul>
@@ -166,9 +194,21 @@ export function Fundamentals({ r }: { r: Result }) {
         <div>
           <h3>애널리스트 컨센서스</h3>
           <p>{c.summary}</p>
-          {"rating_changes_90d" in detail && (
-            <p className="hint">최근 90일 등급 상향 {(detail.rating_changes_90d as { up: number }).up}건, 하향 {(detail.rating_changes_90d as { down: number }).down}건</p>
+          {typeof detail.rec_mean === "number" && (
+            <div className="viz-block">
+              <ZoneScale label={`평균 의견${typeof detail.analysts === "number" ? ` (${detail.analysts}명)` : ""}`} value={detail.rec_mean} min={1} max={5} fmt={(x) => num(x, 1)}
+                         zones={[{ to: 1.5, label: "강력 매수" }, { to: 2.5, label: "매수" }, { to: 3.5, label: "보유" }, { to: 5, label: "매도" }]} />
+            </div>
           )}
+          {"rating_changes_90d" in detail && (() => {
+            const rc = detail.rating_changes_90d as { up: number; down: number };
+            return rc.up + rc.down > 0 ? (
+              <div className="viz-block">
+                <SegBar label="최근 90일 등급 변경" unit={(p) => `${p.value}건`} parts={[
+                  { key: "down", label: "하향", value: rc.down, tone: "down" }, { key: "up", label: "상향", value: rc.up, tone: "up" }]} />
+              </div>
+            ) : <p className="hint">최근 90일 등급 변경 없음</p>;
+          })()}
           {c.recent && c.recent.length > 0 && (
             <ul className="actions">
               {c.recent.slice(0, 6).map((a, i) => (
@@ -185,12 +225,20 @@ export function Fundamentals({ r }: { r: Result }) {
 const SIGNAL: Record<string, [string, string]> = { bullish: ["긍정", "up"], neutral: ["중립", "flat"], bearish: ["부정", "down"] };
 
 export function Personas({ r }: { r: Result }) {
-  const members = Object.entries(r.personas.members);
+  // 점수 높은 순으로 (위 점수 막대와 아래 카드 순서를 맞춘다)
+  const members = Object.entries(r.personas.members).sort((a, b) => (b[1].score ?? -9) - (a[1].score ?? -9));
   if (!members.length) return null;
   return (
     <section id="sec-personas" aria-labelledby="persona-title">
       <h2 id="persona-title" className="section-title">투자 대가 패널 <span className="sub">{r.personas.summary}</span></h2>
       {r.personas.error && <p className="hint warn">{r.personas.error}</p>}
+      <div className="card viz-block">
+        <h3>대가별 점수 <span className="sub">-100 매도 쪽 ~ +100 매수 쪽, 체크리스트 50% + AI 의견 50%</span></h3>
+        <DivBars label="투자 대가별 점수" max={1} fmt={(x) => signed(x * 100, 0)}
+                 rows={members.map(([k, p]) => ({
+                   key: k, label: p.name, value: p.score,
+                   note: `체크리스트 ${p.rule_score === null ? "-" : signed(p.rule_score * 100, 0)}${p.view ? `, AI ${SIGNAL[p.view.signal][0]} ${p.view.confidence}` : ""}` }))} />
+      </div>
       <div className="persona-grid">
         {members.map(([k, p]) => {
           const sig = p.view ? SIGNAL[p.view.signal] : null;
@@ -236,7 +284,16 @@ export function News({ r }: { r: Result }) {
       <h2 id="news-title">뉴스 감성 <span className="sub">{a.summary}</span></h2>
       {error && <p className="hint warn">{error}</p>}
       {a.available && (
-        <p className="hint">최근 7일 {signed(a.recent_7d ?? null)}, 그 이전 {signed(a.older ?? null)}. 사건: {Object.entries(a.events ?? {}).map(([k, x]) => `${k} ${x}`).join(", ") || "-"}</p>
+        <div className="viz-grid news-viz">
+          <SentimentDots items={items} recent={a.recent_7d} older={a.older} />
+          {Object.keys(a.events ?? {}).length > 0 && (
+            <div>
+              <h3>사건 종류별 기사 수</h3>
+              <DivBars label="사건 종류별 기사 수" neutral fmt={(x) => `${x}건`}
+                       rows={Object.entries(a.events ?? {}).sort((x, y) => y[1] - x[1]).map(([k, x]) => ({ key: k, label: k, value: x }))} />
+            </div>
+          )}
+        </div>
       )}
       <ul className="news">
         {shown.map((x) => (
@@ -263,6 +320,12 @@ export function Analogs({ r, horizon }: { r: Result; horizon: Horizon }) {
       {a.available && a.hist && (
         <>
           <Histogram counts={a.hist.counts} edges={a.hist.edges} />
+          <div className="viz-grid">
+            <DivBars label="평균 수익률 비교" fmt={(x) => pct(x)} rows={[
+              { key: "a", label: "유사 국면 평균", value: a.mean ?? null }, { key: "b", label: "전체 평균", value: a.base_mean ?? null }]} />
+            <DivBars label="오른 비율 비교" neutral max={1} fmt={(x) => pct(x, 0, false)} rows={[
+              { key: "a", label: "유사 국면 오른 비율", value: a.hit_rate ?? null }, { key: "b", label: "전체 오른 비율", value: a.base_hit_rate ?? null }]} />
+          </div>
           <p className="hint">표본 {a.n}일 (겹침을 감안한 유효 표본 {a.n_eff}), 평균 {pct(a.mean)} vs 전체 {pct(a.base_mean)}, t = {num(a.t_stat, 2)}. |t| 가 2 미만이면 우연과 구별하기 어렵습니다.</p>
         </>
       )}

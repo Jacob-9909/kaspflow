@@ -4,6 +4,7 @@ import { HORIZON_LABEL, HORIZON_SHORT, HORIZONS, agreementWord, dirClass, num, p
 import { FanChart, Gauge, ScoreBar } from "./Charts";
 import { Term } from "./Glossary";
 import { Chevron } from "./ui";
+import { DivBars, PlanVisual, RangeRows, Waterfall, ZoneScale } from "./Viz";
 
 export function VerdictHero({ r, horizon, onHorizon }: { r: Result; horizon: Horizon; onHorizon: (h: Horizon) => void }) {
   const v = r.verdicts[horizon];
@@ -64,6 +65,11 @@ export function FactorGrid({ r, horizon, onOpen }: { r: Result; horizon: Horizon
       <h2 id="factor-title">모듈별 점수</h2>
       <p className="hint factor-help">점수는 모듈마다 -100(매도 쪽)부터 +100(매수 쪽)까지입니다. 반영은 점수에 {HORIZON_LABEL[horizon]} 가중치와 신뢰도를 곱한 값으로,
         모두 더하면 종합 점수 {signed(v.score * 100, 0)}입니다. 판단에 많이 반영된 순서로 놓았습니다.</p>
+      <h3>점수가 쌓인 과정</h3>
+      <Waterfall steps={mods.filter((m) => m.key in v.contributions).map((m) => ({ key: m.key, label: m.label, value: v.contributions[m.key] }))}
+                 total={v.score} fmt={(x) => signed(x * 100, 1)}
+                 marks={[{ at: -BUY_TH, label: `매도 기준 ${signed(-BUY_TH * 100, 0)}` }, { at: BUY_TH, label: `매수 기준 ${signed(BUY_TH * 100, 0)}` }]} />
+      <h3>모듈별 점수와 반영</h3>
       <div className="factor-head" aria-hidden="true"><span>모듈</span><span>점수</span><span>반영</span></div>
       <ul className="factor-list">
         {mods.map((m) => {
@@ -126,14 +132,8 @@ export function PlanSummary({ r, horizon, onOpen }: { r: Result; horizon: Horizo
         <button className="btn outline" onClick={onOpen}>시뮬레이션 자세히<Chevron /></button>
       </div>
       {ifBuying && <p className="hint plan-note">지금은 {v.label} 구간입니다. 아래는 그래도 산다면 쓸 기준입니다.</p>}
-      <dl className="stat-row">
-        <div><dt>진입가</dt><dd className="num">{usd(p.entry)}</dd></div>
-        <div><dt>손절가</dt><dd className="num down">{usd(p.stop)}<small>{pct(p.stop_pct)}</small></dd></div>
-        <div><dt>목표가</dt><dd className="num up">{usd(p.target)}<small>{pct(p.target_pct)}</small></dd></div>
-        <div><dt>목표가 먼저 도달</dt><dd className="num">{pct(p.p_target_first, 0, false)}</dd></div>
-        <div><dt>손절가 먼저 도달</dt><dd className="num">{pct(p.p_stop_first, 0, false)}</dd></div>
-        <div><dt>{HORIZON_SHORT[horizon]} 뒤 예상 범위</dt><dd className="num">{pct(s.p5, 0)} ~ {pct(s.p95, 0)}<small>시나리오 90%</small></dd></div>
-      </dl>
+      <PlanVisual p={p} days={s.days} />
+      <p className="hint plan-range">{HORIZON_SHORT[horizon]} 뒤 예상 수익 범위(시나리오 90%) <span className="num">{pct(s.p5, 0)} ~ {pct(s.p95, 0)}</span>, 중앙값 <span className="num">{pct(s.median)}</span></p>
     </section>
   );
 }
@@ -145,22 +145,23 @@ export function PlanCard({ r, horizon }: { r: Result; horizon: Horizon }) {
     <section className="card plan" aria-labelledby="plan-title">
       <h2 id="plan-title">매매 계획과 몬테카를로 시뮬레이션 <span className="sub">{HORIZON_LABEL[horizon]}</span></h2>
       <div className="plan-grid">
-        <dl className="kv">
-          <div><dt>진입가</dt><dd className="num">{usd(p.entry)}</dd></div>
-          <div><dt>손절가</dt><dd className="num down">{usd(p.stop)} <small>{pct(p.stop_pct)}</small></dd></div>
-          <div><dt>목표가</dt><dd className="num up">{usd(p.target)} <small>{pct(p.target_pct)}</small></dd></div>
-          <div><dt><Term k="손익비" /></dt><dd className="num">{num(p.reward_risk, 2)} : 1</dd></div>
-          <div><dt>목표 먼저 도달</dt><dd className="num up">{pct(p.p_target_first, 0, false)}</dd></div>
-          <div><dt>손절 먼저 도달</dt><dd className="num down">{pct(p.p_stop_first, 0, false)}</dd></div>
-          <div><dt>기대 수익 (시뮬)</dt><dd className={`num ${dirClass(p.expected_return, 0.001)}`}>{pct(p.expected_return)}</dd></div>
-          <div><dt>계좌 대비 최대 비중</dt><dd className="num">{pct(p.max_weight, 0, false)}{p.kelly_half !== null && <small> (하프 켈리 {pct(p.kelly_half, 0, false)})</small>}</dd></div>
-        </dl>
+        <div className="stack">
+          <PlanVisual p={p} days={s[horizon].days} />
+          <dl className="kv">
+            <div><dt><Term k="손익비" /></dt><dd className="num">{num(p.reward_risk, 2)} : 1</dd></div>
+            <div><dt>기대 수익 (시뮬)</dt><dd className={`num ${dirClass(p.expected_return, 0.001)}`}>{pct(p.expected_return)}</dd></div>
+            <div><dt>계좌 대비 최대 비중</dt><dd className="num">{pct(p.max_weight, 0, false)}{p.kelly_half !== null && <small> (하프 켈리 {pct(p.kelly_half, 0, false)})</small>}</dd></div>
+          </dl>
+        </div>
         <div>
           <FanChart fan={s.fan} days={s[horizon].days} price={p.entry} stop={p.stop} target={p.target} />
           <p className="hint">손절과 목표 = <Term k="ATR" />({num(p.atr, 2)}) × {p.atr_mult[0]} / {p.atr_mult[1]}. 비중은 1회 손실을 계좌의 1%로 묶는 기준(최대 25%).
             경로 {r.simulation.paths.toLocaleString()}개, 최근 3년 수익률 블록 부트스트랩. 기대수익은 CAPM {pct(r.simulation.drift)} 로 맞춤(과거 추세를 미래로 늘리지 않음).</p>
         </div>
       </div>
+      <h3>기간별 수익률 범위</h3>
+      <RangeRows label="기간별 시뮬레이션 수익률 범위" rows={HORIZONS.map((h) => ({ key: h, label: HORIZON_LABEL[h], sim: s[h], on: h === horizon }))} />
+      <p className="hint">가는 선은 시나리오 90%(5%~95%), 진한 상자는 가운데 50%(25%~75%), 세로 막대는 중앙값입니다.</p>
       <div className="table-wrap"><table className="table compact">
         <caption className="sr-only">기간별 시뮬레이션 요약</caption>
         <thead><tr><th>기간</th><th>상승 확률</th><th>중앙값</th><th>5%</th><th>95%</th><th><Term k="CVaR">CVaR 95%</Term></th></tr></thead>
@@ -180,6 +181,10 @@ export function PlanCard({ r, horizon }: { r: Result; horizon: Horizon }) {
     </section>
   );
 }
+
+const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+/** 판단 엔진의 매수·매도 기준 (backend/verdict.py BUY_TH) */
+const BUY_TH = 0.15;
 
 const RISK_CLS: Record<string, string> = { "낮음": "low", "보통": "mid", "높음": "high", "매우 높음": "vhigh" };
 
@@ -203,17 +208,26 @@ export function RiskCard({ r }: { r: Result }) {
 export function TrendCard({ r }: { r: Result }) {
   const t = r.technical.detail;
   const lv = Object.entries(r.technical.levels).filter(([, x]) => x !== null) as [string, number][];
+  const vix = r.regime.detail?.vix;
+  const rets = ([["ret_1m", "1개월"], ["ret_3m", "3개월"], ["ret_6m", "6개월"], ["ret_12m", "1년"], ["rel_strength_6m", "S&P500 대비 6개월"]] as const)
+    .filter(([k]) => isNum(t[k])).map(([k, label]) => ({ key: k, label, value: t[k] as number }));
   return (
     <section className="card">
       <h2>추세와 시장 국면</h2>
-      <dl className="kv">
-        <div><dt>1개월</dt><dd className={`num ${dirClass(t.ret_1m as number, 0.001)}`}>{pct(t.ret_1m as number)}</dd></div>
-        <div><dt>3개월</dt><dd className={`num ${dirClass(t.ret_3m as number, 0.001)}`}>{pct(t.ret_3m as number)}</dd></div>
-        <div><dt>6개월</dt><dd className={`num ${dirClass(t.ret_6m as number, 0.001)}`}>{pct(t.ret_6m as number)}</dd></div>
-        <div><dt>1년</dt><dd className={`num ${dirClass(t.ret_12m as number, 0.001)}`}>{pct(t.ret_12m as number)}</dd></div>
-        <div><dt>RSI(14)</dt><dd className="num">{num(t.rsi14 as number, 0)}</dd></div>
-        <div><dt>ADX(14)</dt><dd className="num">{num(t.adx as number, 0)}</dd></div>
-      </dl>
+      <div className="viz-grid">
+        <div>
+          <h3>기간별 수익률</h3>
+          <DivBars label="기간별 수익률" fmt={(x) => pct(x)} max={Math.max(0.1, ...rets.map((x) => Math.abs(x.value ?? 0)))} rows={rets} />
+        </div>
+        <div>
+          {isNum(t.rsi14) && <ZoneScale label="RSI(14)" value={t.rsi14} min={0} max={100} fmt={(x) => num(x, 0)}
+                                        zones={[{ to: 30, label: "과매도" }, { to: 70, label: "중립" }, { to: 100, label: "과매수" }]} />}
+          {isNum(t.adx) && <ZoneScale label="ADX(14) 추세 강도" value={t.adx} min={0} max={60} fmt={(x) => num(x, 0)}
+                                      zones={[{ to: 20, label: "약함" }, { to: 40, label: "추세 있음" }, { to: 60, label: "강함" }]} />}
+          {isNum(vix) && <ZoneScale label="VIX 시장 불안" value={vix} min={0} max={50} fmt={(x) => num(x, 0)}
+                                    zones={[{ to: 15, label: "안정" }, { to: 25, label: "보통" }, { to: 35, label: "불안" }, { to: 50, label: "공포" }]} />}
+        </div>
+      </div>
       <p className="hint">{r.technical.summary}</p>
       <p className="hint">{r.regime.summary}</p>
       {lv.length > 0 && (
