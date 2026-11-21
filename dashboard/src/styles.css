@@ -379,6 +379,9 @@ a:focus-visible, .term-btn:focus-visible { border-radius: var(--r-xs); } /* 모�
   border-radius: var(--r-lg); background: color-mix(in oklab, var(--surface) 60%, transparent); } /* 물든 카드 위에 반쯤 비치는 흰 면 */
 .advice-tag { font-size: var(--fs-label); color: var(--muted-tone); font-weight: 500; }
 .advice p { margin: 0; font-size: var(--fs-lead); font-weight: 600; }
+/* 지금 할 일 한마디가 있으면 그것이 주인공, 설명은 한 단계 낮춘다 */
+.advice-action { font-size: var(--fs-stat); font-weight: 700; letter-spacing: -.01em; line-height: 1.35; }
+.advice-action + p { font-size: var(--fs-body); font-weight: 500; line-height: 1.65; }
 
 /* 기간별 판단: 매도·관망·매수 구간 위에 세 기간의 종합 점수를 핀으로. 줄을 누르면 그 기간으로 바뀐다 */
 .hz { --hz-a: 48px; --hz-b: 68px; --hz-c: 40px; }

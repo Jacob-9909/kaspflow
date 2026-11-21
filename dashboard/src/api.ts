@@ -79,7 +79,7 @@ export interface Result {
   quote: { symbol: string; name: string; price: number; change: number; currency: string; exchange: string | null; type: string;
     sector: string | null; industry: string | null; market_cap: number | null; as_of: string; partial_bar: boolean };
   verdict: VerdictInfo; verdicts: Record<Horizon, VerdictInfo>;
-  advice: { holding: boolean; pnl: number | null; text: string };
+  advice: { holding: boolean; pnl: number | null; text: string; action?: string };   // action 은 예전에 저장된 결과에는 없다
   narrative: { headline: string; summary: string; bull: string[]; bear: string[]; risks: string[]; triggers: string[] };
   modules: ModuleCard[];
   technical: { summary: string; levels: Record<string, number | null>; detail: Record<string, number | boolean | null> };

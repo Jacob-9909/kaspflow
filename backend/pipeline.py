@@ -182,7 +182,7 @@ async def run(symbol: str, horizon: str, position: dict | None, cache, llm, load
     verdicts = {h: vd.combine({**base, "analogs": analogs[h]}, h, risk, earnings_days, w) for h in sim.HORIZONS}
     sel = verdicts[horizon]
     mods = {**base, "analogs": analogs[horizon]}
-    adv = vd.advice(sel, position, price, plans[horizon])
+    adv = vd.advice(sel, position, price, plans[horizon], verdicts, tech.get("levels", {}))
     narr_err, narr_dropped = None, 0
     if getattr(llm, "enabled", False):
         prompt = vd.cio_prompt(symbol, name, price, verdicts, horizon, mods, tech.get("levels", {}),

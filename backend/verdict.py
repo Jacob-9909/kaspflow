@@ -174,24 +174,72 @@ def combine(modules: dict[str, dict], horizon: str, risk: dict, earnings_days: i
             "weights": {k: w[k] for k in w}, "notes": notes}
 
 
-def advice(v: dict, position: dict | None, price: float, plan: dict) -> dict:
+ORDER = ("short", "mid", "long")
+HORIZON_KO = {"short": "단기 1개월", "mid": "중기 3개월", "long": "장기 1년"}
+
+
+def _nearest(price: float, levels: dict | None) -> tuple[tuple[float, str] | None, tuple[float, str] | None]:
+    """현재가 바로 위와 바로 아래 가격대 (값, 이름). 없으면 None."""
+    lv = levels or {}
+    above = sorted((v, k) for k, v in lv.items() if v and v > price)
+    below = sorted(((v, k) for k, v in lv.items() if v and v < price), reverse=True)
+    return (above[0] if above else None), (below[0] if below else None)
+
+
+def _opposite(v: dict, verdicts: dict | None) -> tuple[str | None, str | None]:
+    """설명할 기간보다 짧은 기간, 긴 기간 가운데 판단이 반대(매수 대 매도)인 기간. 없으면 None."""
+    opp = {"buy": "sell", "sell": "buy"}.get(v["verdict"])
+    if not verdicts or not opp or v.get("horizon") not in ORDER:
+        return None, None
+    i = ORDER.index(v["horizon"])
+    hit = lambda hs: next((h for h in hs if (verdicts.get(h) or {}).get("verdict") == opp), None)
+    return hit(ORDER[:i]), hit(ORDER[i + 1:])
+
+
+def advice(v: dict, position: dict | None, price: float, plan: dict, verdicts: dict | None = None, levels: dict | None = None) -> dict:
+    """판단을 '그래서 지금 무엇을 할지' 로 옮긴다. action 은 한마디, text 는 이유와 기준.
+    다른 기간의 판단이 반대면(장기 매수인데 단기 매도 등) 그 사정에 맞춰 말한다. 규칙으로만 만들고 AI 는 쓰지 않는다."""
     holding = bool(position and (position.get("qty") or 0) > 0)
     pnl = (price / position["avg_price"] - 1) if holding and position.get("avg_price") else None
     stop, target = plan["stop"], plan["target"]
+    shorter, longer = _opposite(v, verdicts)
+    own = HORIZON_KO.get(v.get("horizon"), "이 기간")
+    above, below = _nearest(price, levels)
     if v["verdict"] == "buy":
-        text = (f"계속 보유하세요. 더 산다면 계좌의 {plan['max_weight']:.0%} 안에서 사세요." if holding
-                else f"매수를 고려할 만합니다. 진입 ${plan['entry']:,.2f}, 손절 ${stop:,.2f}({plan['stop_pct']:+.1%}), "
-                     f"목표 ${target:,.2f}({plan['target_pct']:+.1%}). 한 번에 잃는 돈을 계좌의 1%로 제한하면 최대 비중은 {plan['max_weight']:.0%}입니다.")
+        if holding:
+            action, text = "계속 보유", f"계속 보유하세요. 더 산다면 계좌의 {plan['max_weight']:.0%} 안에서 사세요."
+        else:
+            if shorter:
+                action, lead = "나눠서 매수", f"길게 보면 살 만하지만 {HORIZON_KO[shorter]} 판단은 매도입니다. 더 내릴 수 있으니 한 번에 사지 말고 나눠 사세요."
+            elif longer:
+                action, lead = "짧게 매수", f"{own} 기준으로는 살 만하지만 {HORIZON_KO[longer]} 판단은 매도입니다. 오래 들고 가기보다 목표가와 손절가를 지키세요."
+            else:
+                action, lead = "매수 고려", "매수를 고려할 만합니다."
+            text = (f"{lead} 진입 ${plan['entry']:,.2f}, 손절 ${stop:,.2f}({plan['stop_pct']:+.1%}), 목표 ${target:,.2f}({plan['target_pct']:+.1%}). "
+                    f"한 번에 잃는 돈을 계좌의 1%로 제한하면 최대 비중은 {plan['max_weight']:.0%}입니다.")
     elif v["verdict"] == "sell":
         if holding:
+            action = "비중 줄이기"
             text = ("비중을 줄이거나 파는 것을 고려하세요. " + (f"평가이익이 {pnl:+.1%}라 일부 이익을 실현하는 방법도 있습니다." if pnl and pnl > 0
                                                      else f"평가손익은 {pnl:+.1%}입니다. 손절 기준을 다시 확인하세요." if pnl is not None else ""))
+        elif longer:
+            # 하락이 멈췄는지 볼 기준선: 200일선이 현재가 위에 있으면 그 선, 아니면 바로 위 가격대
+            ma200 = (levels or {}).get("200일선")
+            ref = (ma200, "200일선") if ma200 and ma200 > price else above
+            wait = f"종가가 {ref[1]} ${ref[0]:,.2f} 위로 올라서는지" if ref else "하락이 멈추는지"
+            action, text = "사지 않기", f"지금은 사지 마세요. {HORIZON_KO[longer]} 판단은 매수이니, 길게 보고 살 생각이면 {wait} 본 뒤 다시 판단하세요."
+        elif shorter:
+            action, text = "사지 않기", f"새로 사지 않는 편이 낫습니다. {HORIZON_KO[shorter]} 판단은 매수라 잠깐 오를 수 있지만 {own} 기준으로는 매도 쪽입니다."
         else:
-            text = "새로 사지 않는 편이 낫습니다. 보유 중이라면 매도 쪽 신호입니다."
+            action, text = "사지 않기", "새로 사지 않는 편이 낫습니다. 보유 중이라면 매도 쪽 신호입니다."
+    elif holding:
+        action, text = "계속 보유", f"계속 보유하되, 종가가 ${stop:,.2f} 아래로 내려가면 정리를 고려하세요."
     else:
-        text = (f"계속 보유하되, 종가가 ${stop:,.2f} 아래로 내려가면 정리를 고려하세요." if holding
-                else "지금은 사지 말고 지켜보세요. 아래 '판단이 바뀌는 조건'이 나오면 다시 판단합니다.")
-    return {"holding": holding, "pnl": None if pnl is None else round(pnl, 4), "text": text}
+        parts = ([f"{above[1]} ${above[0]:,.2f} 위로 올라서면 매수 쪽으로"] if above else []) + \
+                ([f"{below[1]} ${below[0]:,.2f} 아래로 내려가면 매도 쪽으로"] if below else [])
+        action = "지켜보기"
+        text = "지금은 사지 말고 지켜보세요. " + (f"종가가 {', '.join(parts)} 기웁니다." if parts else "아래 '판단이 바뀌는 조건'이 나오면 다시 판단합니다.")
+    return {"holding": holding, "pnl": None if pnl is None else round(pnl, 4), "action": action, "text": text}
 
 
 class Narrative(BaseModel):
@@ -203,12 +251,18 @@ class Narrative(BaseModel):
     triggers: list[str]
 
 
-CIO_SYSTEM = """너는 투자위원회 위원장이다. 계량 엔진이 이미 정한 판단을 개인 투자자에게 설명한다.
+CIO_SYSTEM = """너는 증권사에서 오래 일한 선배다. 계량 엔진이 이미 정한 판단을, 주식을 잘 모르는 후배가 옆에서 물었다고 생각하고 풀어 준다.
 판단을 바꾸지 않고, 주어진 숫자와 문장만 근거로 쓴다. 과장, 확신, 투자 권유 표현은 쓰지 않는다.
+
+[쉬운 말]
+- 업계 용어는 뜻을 풀어 쓴다: '밸류에이션 매력' 은 '회사 가치에 비해 주가가 싸다', '모멘텀' 은 '오르는 힘', '상대 강도 우위' 는 'S&P500보다 더 올랐다',
+  '변동성 확대' 는 '주가가 크게 출렁일 수 있다', '컨센서스' 는 '애널리스트 평균 의견', '펀더멘털' 은 '회사 실적과 재무'.
+- 지표 숫자에는 그 숫자가 뜻하는 상태를 붙인다. 예) 'RSI 15' 만 쓰지 않고 'RSI 15로 지나치게 많이 팔린 상태'.
+- 근거를 나열하지 말고 가장 큰 것 하나를 먼저 말한다. 한 문장에 숫자는 둘까지만.
 
 [문체]
 - 담백한 한국어. 문장 끝맺음은 항목마다 다르다.
-  headline: 명사형 한 줄. 예) '실적은 탄탄하지만 주가가 적정가의 2배'
+  headline: 명사형 한 줄. 예) '실적은 탄탄하지만 주가가 적정가의 2배', '회사는 싸고 탄탄한데 주가는 아직 내려가는 중'
   summary: 모든 문장을 '-습니다', '-입니다' 로 끝낸다. 예) '영업이익률이 32%로 업종 평균보다 높습니다.'
   bull, bear, risks, triggers 항목: '-음', '-함' 이나 명사로 끝나는 짧은 구. '-습니다' 로 끝내지 않는다.
     예) '영업이익률 32%로 업종 상위', '부채가 적어 금리 부담이 작음', '종가가 50일선 $95 아래로 내려가면 매도 쪽으로 바뀜'
@@ -222,9 +276,6 @@ CIO_SYSTEM = """너는 투자위원회 위원장이다. 계량 엔진이 이미 
   예: '현재가가 적정가의 2.1배' 를 '현재가가 적정가보다 53% 높다' 나 '96% 높다' 로 바꾸면 틀린다. 배수는 배수로, 상승 여력은 상승 여력으로 쓴다.
 - 배수는 '현재가가 적정가의 2.1배' 형태로만 쓴다. '~보다 2.1배 높다' 는 뜻이 모호해 쓰지 않는다.
 - 점수는 -100(매도 쪽)~+100(매수 쪽) 척도다."""
-
-
-HORIZON_KO = {"short": "단기 1개월", "mid": "중기 3개월", "long": "장기 1년"}
 
 
 def cio_prompt(symbol: str, name: str, price: float, verdicts: dict, horizon: str, modules: dict, levels: dict,
@@ -323,15 +374,14 @@ def check_triggers(items: list[str], price: float) -> list[str]:
 
 def price_triggers(price: float, levels: dict, verdict: str) -> list[str]:
     """현재가 바로 위와 아래 가격대로 만든 조건. AI 조건이 검사에서 빠져 모자랄 때 채운다."""
-    above = sorted((v, k) for k, v in levels.items() if v and v > price)
-    below = sorted(((v, k) for k, v in levels.items() if v and v < price), reverse=True)
+    above, below = _nearest(price, levels)
     up_to = {"buy": "매수 근거가 강해짐", "hold": "매수 쪽으로 기움", "sell": "관망 쪽으로 기움"}[verdict]
     down_to = {"buy": "관망 쪽으로 기움", "hold": "매도 쪽으로 기움", "sell": "매도 근거가 강해짐"}[verdict]
     out = []
     if above:
-        out.append(f"종가가 {above[0][1]} ${above[0][0]:,.2f} 위로 올라서면 {up_to}")
+        out.append(f"종가가 {above[1]} ${above[0]:,.2f} 위로 올라서면 {up_to}")
     if below:
-        out.append(f"종가가 {below[0][1]} ${below[0][0]:,.2f} 아래로 내려가면 {down_to}")
+        out.append(f"종가가 {below[1]} ${below[0]:,.2f} 아래로 내려가면 {down_to}")
     return out
 
 
