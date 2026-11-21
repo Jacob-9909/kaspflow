@@ -141,6 +141,9 @@ class TestVerdict(unittest.TestCase):
         self.assertEqual(a["action"], "지켜보기")
         self.assertIn("20일선 $104.00 위로 올라서면 매수 쪽으로, 20일 최저 $95.00 아래로 내려가면 매도 쪽으로", a["text"])
         self.assertEqual(vd.advice(v("mid", "buy"), None, 100.0, plan)["action"], "매수 고려")  # 다른 기간을 모르면 기본 문장
+        at_low = vd.advice(mixed["mid"], None, 99.999999, plan, mixed, {**levels, "52주 최저": 100.0})  # 현재가와 같은 가격대는 조건이 못 된다
+        self.assertNotIn("52주 최저", at_low["text"])
+        self.assertIn("20일선 $104.00 위로 올라서면", at_low["text"])
         held = vd.advice(mixed["short"], {"qty": 3, "avg_price": 80.0}, 100.0, plan, mixed, levels)
         self.assertEqual((held["action"], held["holding"], held["pnl"]), ("비중 줄이기", True, 0.25))
 

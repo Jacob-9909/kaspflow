@@ -179,10 +179,11 @@ HORIZON_KO = {"short": "단기 1개월", "mid": "중기 3개월", "long": "장�
 
 
 def _nearest(price: float, levels: dict | None) -> tuple[tuple[float, str] | None, tuple[float, str] | None]:
-    """현재가 바로 위와 바로 아래 가격대 (값, 이름). 없으면 None."""
+    """현재가 바로 위와 바로 아래 가격대 (값, 이름). 없으면 None.
+    현재가와 사실상 같은 가격대는 뺀다 (52주 최저가에 닿은 날 '52주 최저 $125.53 위로 올라서면' 이라고 말하지 않게)."""
     lv = levels or {}
-    above = sorted((v, k) for k, v in lv.items() if v and v > price)
-    below = sorted(((v, k) for k, v in lv.items() if v and v < price), reverse=True)
+    above = sorted((v, k) for k, v in lv.items() if v and v > price * 1.0001)
+    below = sorted(((v, k) for k, v in lv.items() if v and v < price * 0.9999), reverse=True)
     return (above[0] if above else None), (below[0] if below else None)
 
 
