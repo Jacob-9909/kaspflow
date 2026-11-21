@@ -12,7 +12,7 @@ import { analyze, api, type Horizon, type Me, type Quote, type Result, type Runs
 import { PriceChart, type PriceLevel } from "./components/Charts";
 import { History, Home, RunsTable } from "./components/History";
 import Method from "./components/Method";
-import { FactorGrid, PlanCard, PlanSummary, Reasons, RiskCard, TrendCard, VerdictHero } from "./components/Report";
+import { PlanCard, PlanSummary, PriceLevels, Reasons, RiskCard, ScoreDetail, Situation, TrendCard, VerdictHero } from "./components/Report";
 import { Progress, RunPanel, type StepState } from "./components/Run";
 import Search, { rememberSymbol } from "./components/Search";
 import { Analogs, Fundamentals, News, Personas, Strategies, Valuation } from "./components/Sections";
@@ -254,7 +254,9 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
     { key: "history", label: "판단 기록", badge: past?.runs.length || undefined },
   ];
   const active = tabs.find((t) => t.key === tab && !t.disabled) ? tab : "summary";
-  const withSide = active === "summary" || active === "chart";
+  // 결과를 읽는 요약 화면은 전체 폭을 쓴다. 실행 패널은 결과가 없거나 실행 중일 때만 옆에 두고, 결과가 있으면 맨 아래로 내린다
+  const reading = active === "summary" && !!result && !running;
+  const withSide = (active === "summary" && !reading) || active === "chart";
 
   const runPanel = (quote || result) && symbol && (
     <RunPanel key={result?.run_id ?? "new"} symbol={symbol} authed={!!me?.authenticated} loginEnabled={!!me?.login_enabled}
@@ -265,6 +267,17 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
   const priceChart = (h: number) => result
     ? <PriceChart candles={result.chart.candles} sma50={result.chart.sma50} sma200={result.chart.sma200} markers={sel?.markers} levels={levels} theme={theme} height={h} />
     : quote ? <PriceChart candles={quote.candles} sma50={quote.sma50} sma200={quote.sma200} theme={theme} height={h} /> : <div className="skeleton chart" style={{ height: h }} />;
+
+  const runMeta = result && (
+    <>
+      <p className="hint"><MetaList items={[
+        result.created_at ? `${dateTime(result.created_at)} 실행` : "방금 실행",
+        `${((result.meta.duration_ms ?? 0) / 1000).toFixed(1)}초`,
+        result.position ? `보유 ${result.position.qty}주, 평균 ${usd(result.position.avg_price)}` : null,
+      ]} /></p>
+      <p className="hint">해설 모델 {result.meta.llm_model ?? "없음"} ({Math.round(result.meta.llm_calls ?? 0)}회 호출)</p>
+    </>
+  );
 
   const loadingRun = route.run && !result && !error;
 
@@ -325,10 +338,20 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
               : result ? (
                 <div className="stack">
                   <VerdictHero r={result} horizon={horizon} onHorizon={setHorizon} />
-                  <PlanSummary r={result} horizon={horizon} onOpen={() => onTab("simulation")} />
-                  <FactorGrid r={result} horizon={horizon} onOpen={onTab} />
+                  <Situation r={result} onOpen={onTab} />
+                  <div className="plan-row">
+                    <PlanSummary r={result} horizon={horizon} onOpen={() => onTab("simulation")} />
+                    <PriceLevels r={result} horizon={horizon} />
+                  </div>
                   <Reasons r={result} />
-                  <p className="disclaimer">데이터 기준 {date(result.as_of)}. 매매 판단과 책임은 본인에게 있습니다.</p>
+                  <ScoreDetail r={result} horizon={horizon} />
+                  <div className="rerun">
+                    {runPanel}
+                    <div>
+                      {runMeta}
+                      <p className="disclaimer">데이터 기준 {date(result.as_of)}. 매매 판단과 책임은 본인에게 있습니다.</p>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <div className="stack">
@@ -383,17 +406,7 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
         {withSide && (
           <aside className="side">
             {runPanel}
-            {result && (
-              <section className="card meta">
-                <h2>이 결과</h2>
-                <p className="hint"><MetaList items={[
-                  result.created_at ? `${dateTime(result.created_at)} 실행` : "방금 실행",
-                  `${((result.meta.duration_ms ?? 0) / 1000).toFixed(1)}초`,
-                  result.position ? `보유 ${result.position.qty}주, 평균 ${usd(result.position.avg_price)}` : null,
-                ]} /></p>
-                <p className="hint">해설 모델 {result.meta.llm_model ?? "없음"} ({Math.round(result.meta.llm_calls ?? 0)}회 호출)</p>
-              </section>
-            )}
+            {runMeta && <section className="card meta"><h2>이 결과</h2>{runMeta}</section>}
           </aside>
         )}
       </div>

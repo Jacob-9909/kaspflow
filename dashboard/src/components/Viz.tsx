@@ -115,12 +115,19 @@ export function PlanVisual({ p, days }: { p: Plan; days: number }) {
           <span>목표 <b className="num">{usd(p.target)}</b> <small className="num">{pct(p.target_pct)}</small></span>
         </div>
       </div>
-      <SegBar label={`${days}거래일 안에 먼저 닿을 확률 (시뮬레이션)`} parts={[
-        { key: "stop", label: "손절 먼저", value: p.p_stop_first, tone: "down" },
-        { key: "none", label: "둘 다 안 닿음", value: p.p_neither, tone: "flat" },
-        { key: "target", label: "목표 먼저", value: p.p_target_first, tone: "up" },
-      ]} />
+      <TouchBar p={p} days={days} />
     </div>
+  );
+}
+
+/** 손절과 목표 중 어디에 먼저 닿는지 (시뮬레이션 경로 비율) */
+export function TouchBar({ p, days }: { p: Plan; days: number }) {
+  return (
+    <SegBar label={`${days}거래일 안에 먼저 닿을 확률 (시뮬레이션)`} parts={[
+      { key: "stop", label: "손절 먼저", value: p.p_stop_first, tone: "down" },
+      { key: "none", label: "둘 다 안 닿음", value: p.p_neither, tone: "flat" },
+      { key: "target", label: "목표 먼저", value: p.p_target_first, tone: "up" },
+    ]} />
   );
 }
 

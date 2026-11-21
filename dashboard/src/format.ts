@@ -55,17 +55,6 @@ export const dirClass = (x: number | null | undefined, dead = 0.05) =>
 
 export const signed = (x: number | null | undefined, digits = 2) => (!isNum(x) ? "-" : `${x > 0 ? "+" : ""}${x.toFixed(digits)}`);
 
-/** 모듈 점수(-1~+1)를 말로 옮긴다. 경계는 판단 엔진과 같다: ±0.15 를 넘으면 한쪽 근거, ±0.4 를 넘으면 강한 근거.
- *  (예전 A~F 글자 등급은 '매수에 유리한 정도' 였는데 전략 검증 등급과 글자가 같아 뜻이 헷갈렸다) */
-export function stance(score: number, available = true): { label: string; cls: "up" | "down" | "flat" } {
-  if (!available) return { label: "데이터 없음", cls: "flat" };
-  if (score >= 0.4) return { label: "강한 매수 근거", cls: "up" };
-  if (score >= 0.15) return { label: "매수 근거", cls: "up" };
-  if (score <= -0.4) return { label: "강한 매도 근거", cls: "down" };
-  if (score <= -0.15) return { label: "매도 근거", cls: "down" };
-  return { label: "중립", cls: "flat" };
-}
-
 /** 전략 검증 등급: 백테스트 성과가 우연이 아닌지 매긴다 (backend/validation.py GRADES). [등급, 뜻, 판단 반영] */
 export const GRADE_INFO: [string, string, string][] = [
   ["A", "믿을 만함", "100% 반영"], ["B", "대체로 믿을 만함", "60% 반영"], ["C", "근거가 약함", "25% 반영"], ["F", "우연과 구별되지 않음", "반영 안 함"],
