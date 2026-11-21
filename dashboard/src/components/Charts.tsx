@@ -1,5 +1,5 @@
 /**
- * 차트 모음. 시계열(캔들·누적수익)은 TradingView lightweight-charts, 분포·범위 그림은 가벼운 인라인 SVG.
+ * 차트 모음. 시계열(캔들·누적수익)은 TradingView lightweight-charts, 분포·범위 그림은 가벼운 인라인 SVG 와 HTML.
  * 색은 CSS 변수에서 읽는다 (테마가 바뀌면 theme prop 이 바뀌어 차트를 다시 만든다).
  */
 import { useEffect, useRef } from "react";
@@ -80,35 +80,49 @@ export function EquityChart({ a, b, aLabel, bLabel, theme }: { a: Point[]; b: Po
   return <div ref={el} className="chart" style={{ height: 240 }} role="img" aria-label={`${aLabel} 와 ${bLabel} 누적 수익 비교`} />;
 }
 
-/** 몬테카를로 팬 차트: 5~95% / 25~75% 띠 + 중앙값 + 현재가·손절·목표선 */
+/** 몬테카를로 팬 차트: 5~95% / 25~75% 띠 + 중앙값 + 현재가·손절·목표선.
+ *  띠와 선만 SVG 로 늘이고, 가격 이름표는 HTML 로 오른쪽에 붙인다 (SVG 글자는 좁은 화면에서 같이 줄어 읽기 어렵다). */
 export function FanChart({ fan, days, price, stop, target }: { fan: Fan; days: number; price: number; stop?: number; target?: number }) {
-  const W = 640, H = 240, P = { l: 8, r: 64, t: 12, b: 22 };
   const n = fan.days.findIndex((d) => d >= days);
   const k = n < 0 ? fan.days.length : n + 1;
   const xs = [0, ...fan.days.slice(0, k)];
   const series = (arr: number[]) => [price, ...arr.slice(0, k)];
   const p5 = series(fan.p5), p25 = series(fan.p25), p50 = series(fan.p50), p75 = series(fan.p75), p95 = series(fan.p95);
   const lo = Math.min(...p5, stop ?? Infinity) * 0.98, hi = Math.max(...p95, target ?? -Infinity) * 1.02;
-  const x = (d: number) => P.l + (d / xs[xs.length - 1]) * (W - P.l - P.r);
-  const y = (v: number) => P.t + (1 - (v - lo) / (hi - lo)) * (H - P.t - P.b);
-  const band = (top: number[], bot: number[]) =>
-    top.map((v, i) => `${i ? "L" : "M"}${x(xs[i]).toFixed(1)},${y(v).toFixed(1)}`).join("") +
-    bot.map((_, i) => { const j = bot.length - 1 - i; return `L${x(xs[j]).toFixed(1)},${y(bot[j]).toFixed(1)}`; }).join("") + "Z";
-  const path = (arr: number[]) => arr.map((v, i) => `${i ? "L" : "M"}${x(xs[i]).toFixed(1)},${y(v).toFixed(1)}`).join("");
-  const hline = (v: number | undefined, cls: string, label: string) => v === undefined ? null : (
-    <g className={cls}><line x1={P.l} x2={W - P.r} y1={y(v)} y2={y(v)} /><text x={W - P.r + 4} y={y(v) + 4}>{label}</text></g>);
+  const y = (v: number) => (1 - (v - lo) / (hi - lo)) * 100; // 위에서부터 %
+  const pts = (arr: number[]) => arr.map((v, i) => `${((xs[i] / xs[xs.length - 1]) * 100).toFixed(2)},${y(v).toFixed(2)}`);
+  const band = (top: number[], bot: number[]) => `M${[...pts(top), ...pts(bot).reverse()].join("L")}Z`;
+  // 이름표는 위에서부터 목표, 현재가, 손절. 선이 가까우면 글자가 겹치므로 현재가에서 GAP 만큼은 떨어뜨린다
+  const GAP = 18, yp = y(price);
+  const marks = [
+    ...(target === undefined ? [] : [{ cls: "lv-target", name: "목표", v: target, at: y(target), top: Math.min(y(target), yp - GAP) }]),
+    { cls: "lv-price", name: "현재가", v: price, at: yp, top: yp },
+    ...(stop === undefined ? [] : [{ cls: "lv-stop", name: "손절", v: stop, at: y(stop), top: Math.max(y(stop), yp + GAP) }]),
+  ];
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="fan" role="img"
-         aria-label={`${days}거래일 뒤 가격 분포. 중앙값 ${usd(p50[p50.length - 1])}, 90% 범위 ${usd(p5[p5.length - 1])} ~ ${usd(p95[p95.length - 1])}`}>
-      <path d={band(p95, p5)} className="band-outer" />
-      <path d={band(p75, p25)} className="band-inner" />
-      <path d={path(p50)} className="median" />
-      {hline(price, "lv-price", usd(price))}
-      {hline(stop, "lv-stop", "손절")}
-      {hline(target, "lv-target", "목표")}
-      <text x={P.l} y={H - 6} className="axis">오늘</text>
-      <text x={W - P.r} y={H - 6} className="axis" textAnchor="end">{days}거래일 뒤</text>
-    </svg>
+    <figure className="fan">
+      <div className="fan-plot" role="img"
+           aria-label={`${days}거래일 뒤 가격 분포. 중앙값 ${usd(p50[p50.length - 1])}, 90% 범위 ${usd(p5[p5.length - 1])} ~ ${usd(p95[p95.length - 1])}`}>
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <path d={band(p95, p5)} className="band-outer" />
+          <path d={band(p75, p25)} className="band-inner" />
+          <path d={`M${pts(p50).join("L")}`} className="median" vectorEffect="non-scaling-stroke" />
+        </svg>
+        {marks.map((m) => <span key={m.cls} className={`fan-line ${m.cls}`} style={{ top: `${m.at}%` }} />)}
+        {marks.map((m) => (
+          <span key={m.cls} className={`fan-tag ${m.cls}`} style={{ top: `${m.top}%` }}>
+            <span>{m.name}{m.v !== price && <small className="num"> {pct(m.v / price - 1, 0)}</small>}</span>
+            <b className="num">{usd(m.v)}</b>
+          </span>
+        ))}
+      </div>
+      <div className="fan-axis" aria-hidden="true"><span>오늘</span><span>{days}거래일 뒤</span></div>
+      <ul className="legend">
+        <li><i className="sw fan-outer" />시나리오 90%</li>
+        <li><i className="sw fan-inner" />가운데 50%</li>
+        <li><i className="sw fan-median" />중앙값</li>
+      </ul>
+    </figure>
   );
 }
 
@@ -129,28 +143,6 @@ export function Histogram({ counts, edges }: { counts: number[]; edges: number[]
       <text x={P} y={H - 4} className="axis">{pct(edges[0], 0)}</text>
       <text x={zero} y={H - 4} className="axis" textAnchor="middle">0%</text>
       <text x={W - P} y={H - 4} className="axis" textAnchor="end">{pct(edges[edges.length - 1], 0)}</text>
-    </svg>
-  );
-}
-
-/** 반원 게이지 (-1 매도 ~ +1 매수) */
-export function Gauge({ score, label }: { score: number; label: string }) {
-  const r = 80, cx = 100, cy = 96;
-  const ang = (s: number) => Math.PI * (1 - (Math.max(-1, Math.min(1, s)) + 1) / 2);
-  const pt = (s: number, rr = r) => [cx + rr * Math.cos(ang(s)), cy - rr * Math.sin(ang(s))];
-  const arc = (a: number, b: number) => { const [x1, y1] = pt(a), [x2, y2] = pt(b); return `M${x1},${y1} A${r},${r} 0 0 1 ${x2},${y2}`; };
-  const [nx, ny] = pt(score, r - 14);
-  return (
-    <svg viewBox="0 0 200 112" className="gauge" role="img" aria-label={`종합 점수 ${Math.round(score * 100)} (${label})`}>
-      <path d={arc(-1, -0.15)} className="g-down" />
-      <path d={arc(-0.15, 0.15)} className="g-hold" />
-      <path d={arc(0.15, 1)} className="g-up" />
-      {/* key 로 점수가 바뀔 때마다 바늘 연출을 다시 튼다. --from: 0점(위쪽)에서 출발하는 회전각 */}
-      <line key={score} x1={cx} y1={cy} x2={nx} y2={ny} className="needle"
-            style={{ "--from": `${-Math.max(-1, Math.min(1, score)) * 90}deg` } as React.CSSProperties} />
-      <circle cx={cx} cy={cy} r={5} className="hub" />
-      <text x={22} y={110} className="axis">매도</text>
-      <text x={178} y={110} className="axis" textAnchor="end">매수</text>
     </svg>
   );
 }

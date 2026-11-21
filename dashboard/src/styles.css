@@ -116,10 +116,11 @@ a:focus-visible, .term-btn:focus-visible { border-radius: var(--r-xs); } /* 모�
 
 /* 버튼·컨트롤 */
 /* 누르면 살짝 줄어드는 반응은 누를 수 있는 것 모두에 같은 값으로 */
-.btn, .chip, .topnav button, .segmented label, .horizon-seg button, .brand {
+.btn, .chip, .topnav button, .segmented label, .hz-row, .brand {
   transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
     opacity var(--dur) var(--ease), transform var(--dur) var(--ease); }
-.btn:active:not(:disabled), .chip:active, .topnav button:active, .segmented label:active, .horizon-seg button:active, .brand:active { transform: var(--press); }
+.btn:active:not(:disabled), .chip:active, .topnav button:active, .segmented label:active, .brand:active { transform: var(--press); }
+.hz-row:active { transform: scale(.99); } /* 폭이 넓은 줄은 덜 줄인다 */
 /* 기본 버튼은 회색으로 채운 면 (토스의 보조 버튼). 테두리 없이 바탕 차이로만 보인다 */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--s2); min-height: var(--h-md); padding: 0 var(--s5);
   border-radius: var(--r-md); border: 0; background: var(--surface-2); color: var(--text); cursor: pointer;
@@ -333,7 +334,7 @@ a:focus-visible, .term-btn:focus-visible { border-radius: var(--r-xs); } /* 모�
   width: 100%; margin: 0; padding: var(--s3); border: 0; border-radius: var(--r-md); background: none; color: inherit; text-align: left;
   cursor: pointer; transition: background-color var(--dur) var(--ease), transform var(--dur) var(--ease); }
 .watch-row:hover { background: var(--surface-2); }
-.watch-row:active, .factor-row:active { transform: scale(.99); }
+.watch-row:active, .sig-row:active { transform: scale(.99); }
 .watch-sym { display: flex; align-items: baseline; gap: var(--s2); min-width: 0; }
 .watch-sym small { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .watch-hz { color: var(--text-muted); font-size: var(--fs-label); }
@@ -362,77 +363,101 @@ a:focus-visible, .term-btn:focus-visible { border-radius: var(--r-xs); } /* 모�
 .ms { margin-left: var(--s2); color: var(--text-faint); font-size: var(--fs-caption); font-weight: 400; font-variant-numeric: tabular-nums; }
 .step-detail { color: var(--text-muted); font-size: var(--fs-label); }
 
-/* 판단: 화면에서 유일하게 판단 색으로 물드는 영역 */
-.verdict { --tone: var(--hold); background: color-mix(in oklab, var(--tone) 8%, var(--surface)); border-radius: var(--r-xl); padding: var(--s7) var(--s8) var(--s8); }
+/* 판단: 화면에서 유일하게 판단 색으로 물드는 영역. 왼쪽은 결론과 한마디, 오른쪽은 기간별 눈금.
+   물든 바탕 위의 보조 글자는 회색 대신 판단 색을 조금 섞는다 (--muted-tone) */
+.verdict { --tone: var(--hold); --verdict-bg: color-mix(in oklab, var(--tone) 8%, var(--surface));
+  --muted-tone: color-mix(in oklab, var(--tone) 18%, var(--text-muted));
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(340px, 1fr); gap: var(--s6) var(--s9); align-items: start;
+  background: var(--verdict-bg); border-radius: var(--r-xl); padding: var(--s7) var(--s8) var(--s8); }
 .verdict.tone-up { --tone: var(--up); } .verdict.tone-down { --tone: var(--down); }
-.horizon-seg { display: inline-grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; padding: 4px; margin-bottom: var(--s6);
-  border-radius: 14px; background: color-mix(in oklab, var(--text) 6%, transparent); }
-.horizon-seg button { display: flex; align-items: baseline; justify-content: center; gap: var(--s2); min-height: 40px; padding: var(--s1) var(--s4);
-  border: 0; border-radius: 10px; background: transparent; color: var(--text-muted); cursor: pointer; font-size: var(--fs-label);
-  font-weight: 600; white-space: nowrap; }
-.horizon-seg button:hover { color: var(--text); }
-.horizon-seg button[aria-pressed="true"] { background: var(--thumb); color: var(--text); box-shadow: var(--shadow-low); }
-.horizon-seg b { font-weight: 700; } .horizon-seg .num { color: var(--text-muted); font-weight: 500; }
-/* 작은 굵은 글자라 판단 색을 글자색 쪽으로 15% 당겨 대비 4.5:1 을 맞춘다 */
-.horizon-seg .v-buy b { color: color-mix(in oklab, var(--up) 85%, var(--text)); } .horizon-seg .v-sell b { color: color-mix(in oklab, var(--down) 85%, var(--text)); }
-.horizon-seg .v-hold b { color: color-mix(in oklab, var(--hold) 85%, var(--text)); }
-.verdict-main { display: flex; justify-content: space-between; align-items: center; gap: var(--s6); flex-wrap: wrap; }
-.verdict-label { font-size: var(--fs-verdict); font-weight: 800; letter-spacing: -.035em; line-height: 1; color: var(--tone); margin: 0 0 var(--s5); }
-.verdict-stats { display: flex; flex-wrap: wrap; gap: var(--s3) var(--s7); margin: 0; }
-.verdict-stats div { display: flex; flex-direction: column; gap: 2px; }
-.verdict-stats dt { font-size: var(--fs-label); color: var(--text-muted); }
-.verdict-stats dd { margin: 0; font-size: var(--fs-stat); font-weight: 700; font-variant-numeric: tabular-nums; }
-.verdict-stats dd small { margin-left: var(--s2); font-size: var(--fs-label); font-weight: 600; color: var(--text-muted); }
-/* 판단 색으로 물든 바탕 위의 보조 글자는 회색 대신 그 색을 조금 섞는다 */
-.verdict .verdict-stats dt, .verdict .verdict-stats dd small, .verdict .advice-tag, .verdict .notes, .verdict .horizon-seg .num {
-  color: color-mix(in oklab, var(--tone) 18%, var(--text-muted)); }
-.gauge { width: 220px; max-width: 100%; flex: none; }
-.gauge path { fill: none; stroke-width: 14; stroke-linecap: butt; }
-.gauge .g-down { stroke: var(--down); } .gauge .g-hold { stroke: var(--hold); } .gauge .g-up { stroke: var(--up); }
-.gauge .needle { stroke: var(--text); stroke-width: 3; stroke-linecap: round; } .gauge .hub { fill: var(--text); }
-/* 화면의 유일한 연출: 판단이 나오거나 기간을 바꾸면 바늘이 가운데(0점)에서 제자리로 돈다 */
-.gauge .needle { transform-box: view-box; transform-origin: 100px 96px; animation: needle var(--dur-slow) var(--ease) both; }
-@keyframes needle { from { transform: rotate(var(--from, 0deg)); } }
-.gauge .axis, .fan .axis, .hist .axis { fill: var(--text-muted); font-size: 11px; }
-.narrative { margin-top: var(--s7); padding-top: var(--s6); border-top: 1px solid color-mix(in oklab, var(--tone) 20%, var(--border)); }
-.narrative > * { max-width: 46em; }
-.narrative h3 { font-size: var(--fs-h2); line-height: 1.45; margin-bottom: var(--s3); }
-.narrative p { font-size: var(--fs-lead); line-height: 1.8; margin: 0; }
+.verdict-label { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--fs-verdict); font-weight: 800;
+  letter-spacing: -.035em; line-height: 1; color: var(--tone); margin: 0 0 var(--s5); }
+.verdict-label small { font-size: var(--fs-body); font-weight: 600; letter-spacing: 0; line-height: 1.4; color: var(--muted-tone); }
+.verdict-headline { max-width: 32em; margin: 0 0 var(--s2); font-size: var(--fs-h2); font-weight: 700; line-height: 1.45; text-wrap: balance; }
+.verdict-summary { max-width: 44em; margin: 0; line-height: 1.75; color: var(--muted-tone); }
 .advice { display: flex; flex-direction: column; gap: var(--s1); max-width: 46em; margin-top: var(--s5); padding: var(--s4) var(--s5);
   border-radius: var(--r-lg); background: color-mix(in oklab, var(--surface) 60%, transparent); } /* 물든 카드 위에 반쯤 비치는 흰 면 */
-.advice-tag { font-size: var(--fs-label); color: var(--text-muted); font-weight: 500; }
+.advice-tag { font-size: var(--fs-label); color: var(--muted-tone); font-weight: 500; }
 .advice p { margin: 0; font-size: var(--fs-lead); font-weight: 600; }
-.notes { margin-top: var(--s4); color: var(--text-muted); font-size: var(--fs-label); max-width: 46em; }
 
-/* 모듈별 점수: 같은 축의 막대를 한 줄씩 놓아 모듈끼리 바로 비교한다. 판단에 많이 반영된 모듈이 위.
-   등급 글자 대신 방향을 말로(매수 근거, 중립, 매도 근거) 붙이고, 점수와 반영은 머리줄로 구분한다 */
-.factor-help { max-width: 46em; margin: calc(-1 * var(--s2)) 0 var(--s5); }
-.factor-head, .factor-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px 48px 148px 16px; align-items: center; gap: var(--s4); }
-.factor-head { margin: 0 calc(-1 * var(--s3)); padding: 0 var(--s3) var(--s2); border-bottom: 1px solid var(--border);
-  font-size: var(--fs-caption); color: var(--text-faint); }
-.factor-head span:nth-child(2) { grid-column: 2 / 4; text-align: center; }
-.factor-head span:nth-child(3) { grid-column: 4 / 6; }
-.factor-list { list-style: none; margin: 0 calc(-1 * var(--s3)); padding: 0; }
-.factor-list li + li { border-top: 1px solid var(--border); }
-/* 요약 문장은 둘째 줄에 행 전체 폭으로 둔다 (좁은 칸에 가두면 태블릿 폭에서 잘린다) */
-.factor-row { grid-template-areas: "t b s m c" "d d d d c"; row-gap: var(--s1); width: 100%; margin: 0; padding: var(--s4) var(--s3); border: 0;
-  border-radius: var(--r-md); background: none; color: inherit; text-align: left; cursor: pointer;
-  transition: background-color var(--dur) var(--ease), transform var(--dur) var(--ease); }
-.factor-title { grid-area: t; } .factor-summary { grid-area: d; } .factor-bar { grid-area: b; } .factor-score { grid-area: s; }
-.factor-contrib { grid-area: m; } .factor-row .chev { grid-area: c; }
-.factor-row:hover { background: var(--surface-2); }
-.factor-row.off { opacity: .55; }
-.factor-title { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s1) var(--s2); min-width: 0; }
-.factor-title b { font-size: var(--fs-body); font-weight: 600; }
-.factor-title .tag { margin-left: 0; }
-.factor-summary { max-width: 52em; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.55; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.factor-score { font-size: var(--fs-lead); font-weight: 700; text-align: right; }
-.factor-contrib { display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
-.factor-contrib > .num { font-size: var(--fs-body); font-weight: 700; }
-.factor-contrib small { font-size: var(--fs-caption); color: var(--text-muted); line-height: 1.45; }
-.factor-k { display: none; }
-.factor-row .chev { color: var(--text-faint); transition: color var(--dur) var(--ease), transform var(--dur) var(--ease); }
-.factor-row:hover .chev { color: var(--text); transform: translateX(2px); }
+/* 기간별 판단: 매도·관망·매수 구간 위에 세 기간의 종합 점수를 핀으로. 줄을 누르면 그 기간으로 바뀐다 */
+.hz { --hz-a: 48px; --hz-b: 68px; --hz-c: 40px; }
+.hz h3 { margin: 0 0 var(--s2); padding-left: var(--s3); font-size: var(--fs-label); font-weight: 600; color: var(--muted-tone); }
+.hz-rows { display: grid; gap: 2px; }
+.hz-row { display: grid; grid-template-columns: var(--hz-a) var(--hz-b) minmax(0, 1fr) var(--hz-c); align-items: center; gap: var(--s3);
+  min-height: var(--h-md); padding: 0 var(--s3); border: 0; border-radius: var(--r-md); background: transparent; color: var(--text);
+  cursor: pointer; text-align: left; font-size: var(--fs-sm); --pin-ring: var(--verdict-bg); }
+.hz-row:hover { background: color-mix(in oklab, var(--text) 5%, transparent); }
+.hz-row[aria-pressed="true"] { background: var(--thumb); box-shadow: var(--shadow-low); --pin-ring: var(--thumb); }
+.hz-name { font-weight: 600; color: var(--muted-tone); }
+.hz-row[aria-pressed="true"] .hz-name { color: var(--text); }
+.hz-row b { font-weight: 700; white-space: nowrap; }
+/* 작은 굵은 글자라 판단 색을 글자색 쪽으로 15% 당겨 대비 4.5:1 을 맞춘다 */
+.hz-row.v-buy b { color: color-mix(in oklab, var(--up) 85%, var(--text)); } .hz-row.v-sell b { color: color-mix(in oklab, var(--down) 85%, var(--text)); }
+.hz-row.v-hold b { color: color-mix(in oklab, var(--hold) 85%, var(--text)); }
+/* 구간 폭은 눈금 -60~+60 에서 매도(-60~-15) 3 : 관망(-15~+15) 2 : 매수(+15~+60) 3. 관망 칸은 무채색 (빨강 옆에 호박색을 두지 않는다) */
+.hz-track, .hz-axis { display: grid; grid-template-columns: 3fr 2fr 3fr; gap: 2px; }
+.hz-track { position: relative; height: 8px; }
+.hz-track i { border-radius: 3px; background: color-mix(in oklab, var(--text) 14%, transparent); }
+.hz-track i:first-child { background: color-mix(in oklab, var(--down) 50%, transparent); }
+.hz-track i:nth-child(3) { background: color-mix(in oklab, var(--up) 50%, transparent); }
+.hz-pin { position: absolute; top: -6px; bottom: -6px; width: 4px; margin-left: -2px; border-radius: 2px; background: var(--text);
+  box-shadow: 0 0 0 2px var(--pin-ring); transition: left var(--dur-slow) var(--ease); }
+.hz-score { text-align: right; font-weight: 700; }
+.hz-axis { margin: var(--s1) calc(var(--hz-c) + 2 * var(--s3)) 0 calc(var(--hz-a) + var(--hz-b) + 3 * var(--s3));
+  text-align: center; font-size: var(--fs-caption); color: var(--muted-tone); }
+.hz-note { margin: var(--s3) var(--s3) 0; font-size: var(--fs-label); line-height: 1.55; color: var(--muted-tone); }
+.verdict-stats { display: flex; flex-wrap: wrap; gap: var(--s3) var(--s7); margin: var(--s5) var(--s3) 0; }
+.verdict-stats div { display: flex; flex-direction: column; gap: 2px; }
+.verdict-stats dt { font-size: var(--fs-label); color: var(--muted-tone); }
+.verdict-stats dd { margin: 0; font-size: var(--fs-lead); font-weight: 700; font-variant-numeric: tabular-nums; }
+.verdict-stats dd small { margin-left: var(--s2); font-size: var(--fs-label); font-weight: 600; color: var(--muted-tone); }
+.notes { margin: var(--s4) var(--s3) 0; color: var(--muted-tone); font-size: var(--fs-label); }
+
+/* 지금 상황: 회사(세로)와 타이밍(가로) 지도 + 묶음별 모듈 막대. 막대의 0 선이 한 줄로 맞아 어느 쪽으로 쏠렸는지 바로 보인다 */
+.situation { display: grid; grid-template-columns: 220px repeat(2, minmax(0, 1fr)); gap: var(--s6) var(--s8); align-items: start; }
+.sit-over h2 { margin-bottom: var(--s1); }
+.sit-lead { margin: 0 0 var(--s4); font-size: var(--fs-stat); font-weight: 700; letter-spacing: -.01em; line-height: 1.35; }
+.sit-map { position: relative; display: grid; grid-template: 17fr 6fr 17fr / 17fr 6fr 17fr; gap: 2px; aspect-ratio: 1; max-width: 240px; }
+.sit-cell { display: flex; padding: var(--s2); border-radius: var(--r-xs); background: var(--surface-2); font-size: var(--fs-caption);
+  line-height: 1.35; color: var(--text-faint); }
+.sit-cell.on { background: var(--surface-3); color: var(--text); font-weight: 600; }
+.sit-cell:nth-child(3), .sit-cell:nth-child(9) { justify-content: flex-end; text-align: right; }
+.sit-cell:nth-child(7), .sit-cell:nth-child(9) { align-items: flex-end; }
+.sit-dot { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 3px var(--surface); }
+.sig-group h3 { display: flex; align-items: baseline; gap: var(--s2); margin: 0 0 var(--s1); padding: 0 var(--s3) var(--s2); border-bottom: 1px solid var(--border); }
+.sig-group h3 small { font-size: var(--fs-label); font-weight: 500; color: var(--text-muted); }
+.sig-group h3 .num { margin-left: auto; }
+.sig-group ul { list-style: none; margin: 0; padding: 0; }
+.sig-row { display: grid; grid-template-columns: minmax(0, 1fr) 76px minmax(64px, 1.2fr) 40px 16px; align-items: center; gap: var(--s3); width: 100%;
+  min-height: var(--h-md); margin: 0; padding: var(--s1) var(--s3); border: 0; border-radius: var(--r-md); background: none; color: inherit; text-align: left;
+  cursor: pointer; transition: background-color var(--dur) var(--ease), transform var(--dur) var(--ease); }
+.sig-row:hover { background: var(--surface-2); }
+.sig-row.off { opacity: .55; }
+.sig-name { min-width: 0; font-size: var(--fs-sm); font-weight: 600; line-height: 1.3; }
+.sig-word { font-size: var(--fs-label); font-weight: 600; white-space: nowrap; }
+.sig-score { text-align: right; font-size: var(--fs-sm); font-weight: 700; white-space: nowrap; }
+.sig-row .chev { color: var(--text-faint); transition: color var(--dur) var(--ease), transform var(--dur) var(--ease); }
+.sig-row:hover .chev { color: var(--text); transform: translateX(2px); }
+
+/* 점수 계산 과정 (접어 둠) */
+.factor-help { max-width: 46em; margin: 0 0 var(--s5); }
+.score-detail > summary { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); width: auto; min-height: var(--h-md);
+  margin: calc(-1 * var(--s3)) 0; padding: 0; color: var(--text); list-style: none; border-radius: var(--r-md); }
+.score-detail > summary::-webkit-details-marker { display: none; }
+.score-detail > summary h2 { margin: 0; }
+.score-detail > summary .chev { width: 20px; height: 20px; color: var(--text-muted); transform: rotate(90deg); transition: transform var(--dur) var(--ease); }
+.score-detail[open] > summary { margin-bottom: var(--s3); }
+.score-detail[open] > summary .chev { transform: rotate(-90deg); }
+.rerun { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: var(--s5) var(--s7); align-items: start; }
+.rerun > .card { margin: 0; }
+.rerun > div { padding-top: var(--s6); }
+/* 매매 계획(넓게) 옆에 가격 위치 */
+.plan-row { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: var(--s5); }
+.plan-row > .card { margin: 0; }
+.levels-map .db-row { grid-template-columns: 124px minmax(0, 1fr) 52px; min-height: 44px; }
+.levels-map .db-label { color: var(--text); font-weight: 600; }
+.levels-map .db-label small { display: block; font-size: var(--fs-caption); font-weight: 500; color: var(--text-muted); }
 .grade { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-sm); font-weight: 800; font-size: var(--fs-label);
   background: var(--surface-3); color: var(--text-muted); }
 .grade.g-A { background: color-mix(in oklab, var(--g-a) var(--tint), var(--surface)); color: var(--g-a); }
@@ -460,7 +485,7 @@ a:focus-visible, .term-btn:focus-visible { border-radius: var(--r-xs); } /* 모�
 .record-avg { display: block; font-weight: 500; color: var(--text-muted); font-size: var(--fs-caption); }
 
 /* 근거 */
-.reasons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s6) var(--s7); }
+.reasons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s6) var(--s7); }
 .reason h3 { display: flex; align-items: center; gap: var(--s2); font-size: var(--fs-body); margin-bottom: var(--s3); }
 .reason h3::before { content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .reason.r-up h3::before { background: var(--up); } .reason.r-down h3::before { background: var(--down); }
@@ -471,13 +496,27 @@ a:focus-visible, .term-btn:focus-visible { border-radius: var(--r-xs); } /* 모�
 
 /* 매매 계획·팬 차트 */
 .plan-grid { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 1.6fr); gap: var(--s6); margin-bottom: var(--s5); align-items: start; }
-.fan, .hist { width: 100%; height: auto; display: block; }
+/* 요약의 매매 계획은 옆 카드와 높이를 맞추고, 남는 높이는 팬 차트가 채운다 */
+.plan-summary { display: flex; flex-direction: column; }
+.plan-summary .plan-grid { flex: 1; margin-bottom: 0; align-items: stretch; }
+.plan-summary .fan { display: flex; flex-direction: column; }
+.plan-summary .fan-plot { flex: 1; min-height: 220px; }
+/* 팬 차트: 띠와 중앙값 선은 SVG 를 늘여 그리고, 가격 이름표는 오른쪽 여백(--fan-tag)에 HTML 로 둔다 */
+.fan { --fan-tag: 104px; margin: 0; }
+.fan-plot { position: relative; height: 220px; margin-right: var(--fan-tag); }
+.fan-plot svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
 .fan .band-outer { fill: color-mix(in oklab, var(--text) 7%, transparent); } .fan .band-inner { fill: color-mix(in oklab, var(--text) 14%, transparent); }
 .fan .median { fill: none; stroke: var(--text); stroke-width: 2; }
-.fan line { stroke-width: 1; stroke-dasharray: 4 4; } .fan text { font-size: 11px; }
-.fan .lv-price line { stroke: var(--text-muted); } .fan .lv-price text { fill: var(--text-muted); }
-.fan .lv-stop line { stroke: var(--down); } .fan .lv-stop text { fill: var(--down); }
-.fan .lv-target line { stroke: var(--up); } .fan .lv-target text { fill: var(--up); }
+.fan-line { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--text-muted); }
+.fan-line.lv-stop { border-color: var(--down); } .fan-line.lv-target { border-color: var(--up); }
+.fan-tag { position: absolute; left: calc(100% + var(--s2)); transform: translateY(-50%); display: flex; flex-direction: column;
+  font-size: var(--fs-caption); line-height: 1.35; color: var(--text-muted); white-space: nowrap; }
+.fan-tag b { font-size: var(--fs-label); font-weight: 700; color: var(--text); }
+.fan-axis { display: flex; justify-content: space-between; margin: var(--s1) var(--fan-tag) 0 0; font-size: var(--fs-caption); color: var(--text-faint); }
+.sw.fan-outer { background: color-mix(in oklab, var(--text) 9%, var(--surface)); } .sw.fan-inner { background: color-mix(in oklab, var(--text) 22%, var(--surface)); }
+.sw.fan-median { height: 2px; border-radius: 1px; background: var(--text); }
+.hist { width: 100%; height: auto; display: block; }
+.hist .axis { fill: var(--text-muted); font-size: 11px; }
 .hist .bar-up { fill: var(--up); opacity: .8; } .hist .bar-down { fill: var(--down); opacity: .8; }
 .hist .zero { stroke: var(--text-muted); stroke-dasharray: 3 3; }
 
@@ -717,7 +756,12 @@ details summary:hover { color: var(--text); }
   .layout { grid-template-columns: minmax(0, 1fr); }
   .side { position: static; }
   .three-col { grid-template-columns: 1fr 1fr; }
-  .modules-info { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .modules-info, .reasons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .verdict, .plan-row { grid-template-columns: minmax(0, 1fr); }
+  .hz { max-width: 560px; }
+  /* 지도는 왼쪽에 두고 두 묶음을 오른쪽에 세로로 */
+  .situation { grid-template-columns: 220px minmax(0, 1fr); }
+  .sit-over { grid-row: 1 / span 2; }
 }
 @media (max-width: 760px) {
   :root { --fs-title: 1.375rem; --fs-price: 1.875rem; --fs-verdict: 2.5rem; }
@@ -733,28 +777,27 @@ details summary:hover { color: var(--text); }
   .head-actions .btn { flex: 1; min-height: 44px; }
   .range52 { grid-template-columns: auto minmax(0, 1fr) auto auto; width: 100%; }
   .verdict { padding: var(--s5) var(--s5) var(--s6); border-radius: var(--r-xl); }
-  .horizon-seg { display: grid; width: 100%; margin-bottom: var(--s5); }
-  .horizon-seg button { flex-direction: column; align-items: center; gap: 0; padding: var(--s2) var(--s1); line-height: 1.35; }
   .verdict-label { margin-bottom: var(--s4); }
   .verdict-stats { gap: var(--s3) var(--s5); }
-  .verdict-stats dd { font-size: var(--fs-lead); }
-  .gauge { width: 168px; margin: 0 auto; }
-  .narrative { margin-top: var(--s5); padding-top: var(--s5); }
-  .narrative p { line-height: 1.75; }
-  .factor-head { display: none; }
+  /* 첫 화면에 결론, 한 줄 이유, 기간별 판단이 함께 들어오게 기간 눈금을 해설 문단 위로 올린다 */
+  .verdict { gap: 0; }
+  .verdict-say { display: contents; }
+  .verdict-headline { margin-bottom: var(--s5); }
+  .verdict-summary, .advice { order: 2; }
+  /* 물든 카드 안쪽 여백이 좁으니 기간 줄은 카드 가장자리까지 넓힌다 */
+  .hz { --hz-a: 44px; --hz-b: 60px; --hz-c: 34px; order: 1; max-width: none; margin: 0 calc(-1 * var(--s3)) var(--s5); }
+  .situation { grid-template-columns: minmax(0, 1fr); gap: var(--s5); }
+  .sit-over { grid-row: auto; }
+  .sit-map { max-width: none; aspect-ratio: 16 / 10; } /* 좁은 화면에서는 가로로 넓힌다 */
+  .sig-group { margin: 0 calc(-1 * var(--s3)); }
+  .sig-row { grid-template-columns: minmax(0, 1fr) auto 64px 38px 16px; gap: var(--s2); }
+  .sig-row:hover { background: none; }
+  .rerun { grid-template-columns: minmax(0, 1fr); }
   .watch-list { margin: 0; }
   .watch-row { grid-template-columns: minmax(0, 1fr) auto 16px; grid-template-areas: "s v c" "h t ."; row-gap: var(--s1); padding: var(--s3) 0; }
   .watch-row:hover { background: none; }
   .watch-sym { grid-area: s; } .watch-verdict { grid-area: v; justify-content: flex-end; } .watch-row .chev { grid-area: c; }
   .watch-hz { grid-area: h; } .watch-time { grid-area: t; } .watch-score { display: none; }
-  .factor-list { margin: 0; }
-  .factor-row { grid-template-columns: minmax(0, 1fr) auto 16px; grid-template-areas: "t t c" "d d d" "b s ." "m m ."; row-gap: var(--s2); padding: var(--s4) 0; }
-  .factor-row:hover { background: none; }
-  .factor-score { font-size: var(--fs-body); }
-  .factor-summary { -webkit-line-clamp: 3; }
-  .factor-row .chev { align-self: start; margin-top: 4px; }
-  .factor-contrib { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 var(--s3); }
-  .factor-k { display: inline; font-size: var(--fs-label); font-weight: 500; color: var(--text-muted); }
   .ff-row { grid-template-columns: 1fr; gap: var(--s1); }
   .ff-val { text-align: left; }
   .persona-grid { grid-template-columns: 1fr; }
