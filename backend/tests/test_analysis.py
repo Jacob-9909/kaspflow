@@ -147,6 +147,15 @@ class TestVerdict(unittest.TestCase):
         held = vd.advice(mixed["short"], {"qty": 3, "avg_price": 80.0}, 100.0, plan, mixed, levels)
         self.assertEqual((held["action"], held["holding"], held["pnl"]), ("비중 줄이기", True, 0.25))
 
+    def test_headline_multiple_must_match_input(self):
+        # 적정가의 1.2배인 종목에 '적정가의 2배' 라는 제목 (AI 가 프롬프트 예시를 베낀 실제 사례). 숫자 2 는 입력에 있어도 배수로는 없다
+        prompt = "현재가 $484.52\n- 적정가 비교: 추정 적정가 $409.63, 현재가가 적정가의 1.2배\n베타 2.00, PER 30.5배"
+        n = {"headline": "실적은 탄탄하지만 주가가 적정가의 2배", "summary": "현재가가 적정가의 1.2배입니다.", "bull": ["PER 30.5배로 이익에 비해 비쌈"],
+             "bear": ["주가가 적정가의 1.2배"], "risks": [], "triggers": []}
+        out, dropped = vd.tidy_narrative(n, {"verdict": "buy", "label": "매수"}, prompt, 484.52, {})
+        self.assertEqual(out["headline"], "PER 30.5배로 이익에 비해 비쌈")   # 제목은 버리고 첫 근거로
+        self.assertEqual((dropped, out["bear"]), (1, ["주가가 적정가의 1.2배"]))
+
     def test_tidy_summary_drops_other_verdicts(self):
         s = "적정가가 현재가를 크게 웃돌아 매도 판단이 섭니다. 재무 건전성은 반대 근거입니다. 200일선 회복을 지켜봅니다."
         self.assertEqual(vd.tidy_summary(s, "관망"), "재무 건전성은 반대 근거입니다. 200일선 회복을 지켜봅니다.")

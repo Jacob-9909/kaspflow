@@ -258,24 +258,25 @@ CIO_SYSTEM = """너는 증권사에서 오래 일한 선배다. 계량 엔진이
 [쉬운 말]
 - 업계 용어는 뜻을 풀어 쓴다: '밸류에이션 매력' 은 '회사 가치에 비해 주가가 싸다', '모멘텀' 은 '오르는 힘', '상대 강도 우위' 는 'S&P500보다 더 올랐다',
   '변동성 확대' 는 '주가가 크게 출렁일 수 있다', '컨센서스' 는 '애널리스트 평균 의견', '펀더멘털' 은 '회사 실적과 재무'.
-- 지표 숫자에는 그 숫자가 뜻하는 상태를 붙인다. 예) 'RSI 15' 만 쓰지 않고 'RSI 15로 지나치게 많이 팔린 상태'.
+- 지표 숫자에는 그 숫자가 뜻하는 상태를 붙인다. 꼴) 'RSI <값>' 만 쓰지 않고 'RSI <값>로 지나치게 많이 팔린 상태'.
 - 근거를 나열하지 말고 가장 큰 것 하나를 먼저 말한다. 한 문장에 숫자는 둘까지만.
 
 [문체]
-- 담백한 한국어. 문장 끝맺음은 항목마다 다르다.
-  headline: 명사형 한 줄. 예) '실적은 탄탄하지만 주가가 적정가의 2배', '회사는 싸고 탄탄한데 주가는 아직 내려가는 중'
-  summary: 모든 문장을 '-습니다', '-입니다' 로 끝낸다. 예) '영업이익률이 32%로 업종 평균보다 높습니다.'
+- 담백한 한국어. 문장 끝맺음은 항목마다 다르다. 아래 < > 는 자리 표시다. 꼴만 따르고 내용은 이 종목의 입력에서만 가져온다.
+  headline: 명사나 '-음', '-함', '-중' 으로 끝나는 한 줄. '-다' 로 끝내지 않는다. 꼴) '<좋은 점>지만 <걸리는 점>', '<가장 큰 이유>'
+  summary: 모든 문장을 '-습니다', '-입니다' 로 끝낸다.
   bull, bear, risks, triggers 항목: '-음', '-함' 이나 명사로 끝나는 짧은 구. '-습니다' 로 끝내지 않는다.
-    예) '영업이익률 32%로 업종 상위', '부채가 적어 금리 부담이 작음', '종가가 50일선 $95 아래로 내려가면 매도 쪽으로 바뀜'
+    꼴) '<지표> <값>로 <그 뜻>', '종가가 <가격대 이름> $<값> 아래로 내려가면 매도 쪽으로 바뀜'
+- 입력에 없는 비교는 쓰지 않는다. 업종 평균, 경쟁사, 과거 평균은 입력에 있을 때만 쓴다.
 - 한 문장에 한 가지 뜻만 담고 60자 안팎으로 끊는다.
 - 번역투를 쓰지 않는다: '~에 대해', '~에 있어', '~를 통해', '~로 인한', '~에 의해', '가지고 있다', '상회/하회' 대신 '넘다/밑돌다'.
-- 상투구를 쓰지 않는다: '신중한 접근이 필요', '주목할 필요', '~할 것으로 보입니다', '양호한 모습', '상충', '시사'.
+- 상투구를 쓰지 않는다: '신중한 접근이 필요', '주목할 필요', '지켜볼 필요', '~할 것으로 보입니다', '양호한 모습', '상충', '시사'.
 - 기호와 영어 단어를 풀어 쓴다: 'vs' 는 '~와 비교하면', '/' 는 쉼표, 'buy' 는 '매수'. RSI, MACD, PER, PBR, ADX, VIX, S&P500 같은 지표 이름은 그대로 쓴다.
 
 [숫자]
-- 숫자는 주어진 값과 표기를 그대로 옮긴다. 금액은 '$164.34' 처럼 쓰고 '달러' 로 바꾸지 않는다. 퍼센트의 기준과 방향을 바꾸지 않는다.
-  예: '현재가가 적정가의 2.1배' 를 '현재가가 적정가보다 53% 높다' 나 '96% 높다' 로 바꾸면 틀린다. 배수는 배수로, 상승 여력은 상승 여력으로 쓴다.
-- 배수는 '현재가가 적정가의 2.1배' 형태로만 쓴다. '~보다 2.1배 높다' 는 뜻이 모호해 쓰지 않는다.
+- 숫자는 주어진 값과 표기를 그대로 옮긴다. 금액은 입력처럼 달러 기호($)를 숫자 앞에 붙여 쓰고 '달러' 라는 말로 바꾸지 않는다. 퍼센트의 기준과 방향을 바꾸지 않는다.
+  '현재가가 적정가의 N배' 를 '현재가가 적정가보다 M% 높다' 로 바꾸면 틀린다. 배수는 배수로, 상승 여력은 상승 여력으로 쓴다.
+- 배수는 입력에 적힌 값으로 '현재가가 적정가의 N배' 형태로만 쓴다. '~보다 N배 높다' 는 뜻이 모호해 쓰지 않는다.
 - 점수는 -100(매도 쪽)~+100(매수 쪽) 척도다."""
 
 
@@ -386,14 +387,21 @@ def price_triggers(price: float, levels: dict, verdict: str) -> list[str]:
     return out
 
 
-def grounded(text: str, facts: set[float]) -> bool:
-    """문장 속 숫자가 모두 AI 에 준 입력에 있는가. 반올림한 값도 인정한다(2.1배 -> '2배', $164.34 -> '$164')."""
-    for t in _NUM.findall(text):
-        s = t.replace(",", "")
-        d = len(s.split(".")[1]) if "." in s else 0
-        if not any(round(f, d) == float(s) for f in facts):
-            return False
-    return True
+_MULT = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*배")
+
+
+def grounded(text: str, facts: set[float], mults: set[float] | None = None) -> bool:
+    """문장 속 숫자가 모두 AI 에 준 입력에 있는가. 반올림한 값도 인정한다(2.1배 -> '2배', $164.34 -> '$164').
+    mults 를 주면 '배' 가 붙은 숫자는 입력의 배수와만 맞춰 본다. 숫자 2 는 입력 어딘가에 늘 있어서,
+    적정가의 1.2배인 종목에 '적정가의 2배' 라고 써도 숫자만 보면 통과하기 때문이다."""
+    def found(tokens: list[str], pool: set[float]) -> bool:
+        for t in tokens:
+            s = t.replace(",", "")
+            d = len(s.split(".")[1]) if "." in s else 0
+            if not any(round(f, d) == float(s) for f in pool):
+                return False
+        return True
+    return found(_NUM.findall(text), facts) and (mults is None or found(_MULT.findall(text), mults))
 
 
 def tidy_narrative(n: dict, v: dict, prompt: str, price: float, levels: dict) -> tuple[dict, int]:
@@ -401,11 +409,12 @@ def tidy_narrative(n: dict, v: dict, prompt: str, price: float, levels: dict) ->
     다른 판단을 섞은 문장, 입력에 없는 숫자, 현재가와 방향이 맞지 않는 조건, 들쭉날쭉한 끝맺음.
     돌려주는 두 번째 값은 뺀 문장·항목 수 (결과 meta 에 남긴다)."""
     facts = {float(t.replace(",", "")) for t in _NUM.findall(prompt)}
+    mults = {float(t.replace(",", "")) for t in _MULT.findall(prompt)}
     dropped = 0
 
     def keep(items: list[str]) -> list[str]:
         nonlocal dropped
-        ok = [x for x in items if grounded(x, facts)]
+        ok = [x for x in items if grounded(x, facts, mults)]
         dropped += len(items) - len(ok)
         return ok
 
@@ -419,7 +428,7 @@ def tidy_narrative(n: dict, v: dict, prompt: str, price: float, levels: dict) ->
     ok = keep(sents)
     out["summary"] = " ".join(ok) if ok else n.get("summary", "")
     head = noun_end(n.get("headline", ""))
-    if not grounded(head, facts):
+    if not grounded(head, facts, mults):
         dropped += 1
         first = (out.get("bull") if v["verdict"] == "buy" else out.get("bear")) or out.get("bull") or out.get("bear") or [""]
         head = first[0] or head
