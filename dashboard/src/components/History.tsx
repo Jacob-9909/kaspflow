@@ -93,7 +93,8 @@ function Watchlist({ authed, onPick, onOpen }: { authed: boolean; onPick: (s: st
 
 export function Home({ authed, onPick, onOpen }: { authed: boolean; onPick: (s: string) => void; onOpen: (id: string) => void }) {
   const [data, setData] = useState<RunsResponse | null>(null);
-  useEffect(() => { api.runs().then(setData).catch(() => setData({ runs: [], stats: { evaluated: 0, hit_rate: null, by_verdict: {} } })); }, []);
+  // 관심 종목 자동 판단은 위 목록과 시장 화면에 있으니, 여기는 직접 실행한 것만 보인다 (하루 10건씩 쌓여 직접 돌린 결과가 묻힌다)
+  useEffect(() => { api.runs(undefined, "manual").then(setData).catch(() => setData({ runs: [], stats: { evaluated: 0, hit_rate: null, by_verdict: {} } })); }, []);
   return (
     <div className="home">
       <section className="hero">
@@ -104,7 +105,7 @@ export function Home({ authed, onPick, onOpen }: { authed: boolean; onPick: (s: 
       </section>
       <Watchlist authed={authed} onPick={onPick} onOpen={onOpen} />
       <section className="card">
-        <h2>최근 판단 <span className="sub">기간이 지나면 실제 수익률로 적중을 매깁니다</span></h2>
+        <h2>최근 판단 <span className="sub">직접 실행한 것만. 기간이 지나면 실제 수익률로 적중을 매깁니다</span></h2>
         {data ? <><Stats data={data} /><RunsTable data={{ ...data, runs: data.runs.slice(0, 10) }} onOpen={onOpen} compact /></> : <p className="hint">불러오는 중…</p>}
       </section>
       <section className="modules-info" aria-labelledby="modules-title">
@@ -118,10 +119,20 @@ export function Home({ authed, onPick, onOpen }: { authed: boolean; onPick: (s: 
 export function History({ onOpen }: { onOpen: (id: string) => void }) {
   const [data, setData] = useState<RunsResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { api.runs().then(setData).catch((e) => setErr((e as Error).message)); }, []);
+  const [source, setSource] = useState<"" | "manual" | "auto">("");
+  useEffect(() => { setErr(null); api.runs(undefined, source || undefined).then(setData).catch((e) => setErr((e as Error).message)); }, [source]);
   return (
     <section className="card">
-      <h2>판단 기록과 적중률</h2>
+      <div className="panel-head">
+        <h2>판단 기록과 적중률</h2>
+        <div className="segmented" role="radiogroup" aria-label="기록 종류">
+          {([["", "전체"], ["manual", "직접 실행"], ["auto", "자동 판단"]] as const).map(([k, label]) => (
+            <label key={k} className={source === k ? "on" : ""}>
+              <input type="radio" name="run-source" value={k} checked={source === k} onChange={() => setSource(k)} />{label}
+            </label>
+          ))}
+        </div>
+      </div>
       <p className="hint">판단 기간이 지나면 실제 수익률로 적중을 매깁니다. 매수는 +2% 초과, 매도는 -2% 미만, 관망은 ±5% 이내면 적중입니다 (midas-touch 판단 원장과 같은 기준).</p>
       {err && <p className="field-error" role="alert">기록을 불러오지 못했습니다: {err}</p>}
       {data ? <><Stats data={data} /><RunsTable data={data} onOpen={onOpen} /></> : !err && <p className="hint">불러오는 중…</p>}

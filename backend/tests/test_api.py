@@ -33,8 +33,13 @@ class FakeDB(MemCache):
     def save_run(self, run_id, r):
         self.saved[run_id] = r
 
-    def list_runs(self, symbol, limit):
-        return [r for r in self.rows if symbol in (None, r["symbol"])][:limit]
+    def list_runs(self, symbol, limit, source=None):
+        keep = lambda r: source is None or (r.get("source") == "auto") == (source == "auto")
+        return [r for r in self.rows if symbol in (None, r["symbol"]) and keep(r)][:limit]
+
+    def watch_overview(self):
+        return [{"symbol": k, "horizon": h, "run_id": None, "created_at": None, "name": None, "price": None, "change": None,
+                 "headline": None, "action": None, "verdicts": {}, "modules": []} for k, h in self.watch.items()]
 
     def get_run(self, run_id):
         r = self.saved.get(run_id)
@@ -148,6 +153,49 @@ class TestAPI(unittest.TestCase):
         self.assertIsNone(second["hit"])
         self.assertAlmostEqual(second["return"], 0.10, places=3)
         self.assertEqual(body["stats"]["evaluated"], 1)
+
+    def test_runs_source_filter(self):
+        now = datetime.now(timezone.utc)
+        row = lambda i, src: {"id": i, "symbol": "SYN", "name": "S", "created_at": now, "horizon": "mid", "verdict": "buy",
+                              "score": 0.3, "confidence": 0.6, "price": 10.0, "headline": "h", "source": src}
+        self.db.rows = [row("1", "auto"), row("2", None)]
+        appmod.market.last_closes = lambda syms, cache: {"SYN": 11.0}
+        ids = lambda q: [r["id"] for r in self.c.get("/runs" + q).json()["runs"]]
+        self.assertEqual((ids(""), ids("?source=auto"), ids("?source=manual")), (["1", "2"], ["1"], ["2"]))
+        self.assertEqual(self.c.get("/runs?source=x").status_code, 422)
+
+    def test_market_overview_from_cache(self):
+        import overview
+        start = (datetime.now() - timedelta(days=420)).strftime("%Y-%m-%d")
+        for i, (sym, _) in enumerate(overview.INDEXES + overview.ASSETS + overview.SECTORS):
+            self.db.set(f"yf:series:{sym}:{'10y' if sym == 'SPY' else '2y'}", to_cache(ohlcv(300, seed=i, start=start)))
+        self.db.set("yf:series:^VIX:2y", to_cache(ohlcv(300, seed=90, start=start)))
+        self.db.set("yf:series:^TNX:2y", to_cache(ohlcv(300, seed=91, start=start)))
+        body = self.c.get("/market").json()
+        self.assertEqual((len(body["indexes"]), len(body["assets"]), len(body["sectors"])), (4, 4, 11))
+        spy = body["indexes"][0]
+        self.assertEqual(spy["symbol"], "SPY")
+        self.assertTrue(set(("price", "d1", "w1", "m1", "m3", "ytd", "vs_200", "spark")) <= set(spy))
+        self.assertEqual(spy["spark"][-1], spy["price"])            # 흐름 선의 끝점은 오늘 가격
+        self.assertTrue(body["regime"]["available"])
+        self.assertEqual(body["breadth"]["total"], 11)
+        self.assertIn(body["vix"]["word"], ("안정", "보통", "높음", "매우 높음"))
+        self.assertIn("market:overview", self.db.d)                 # 묶은 결과를 캐시한다
+
+    def test_market_overview_unavailable(self):
+        real, appmod.market._history = appmod.market._history, lambda sym, period: None   # 시세를 못 받으면 503 과 안내 문장
+        try:
+            r = self.c.get("/market")
+        finally:
+            appmod.market._history = real
+        self.assertEqual(r.status_code, 503)
+        self.assertIn("시장 데이터", r.json()["detail"])
+
+    def test_watchlist_overview(self):
+        self.db.watch = {"NVDA": "mid"}
+        body = self.c.get("/watchlist/overview").json()
+        self.assertEqual(body["items"][0]["symbol"], "NVDA")
+        self.db.watch = {}
 
     def test_watchlist_requires_login_and_limit(self):
         self.db.watch = {}

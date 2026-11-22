@@ -3,6 +3,7 @@
  *   /                      홈
  *   /?s=NVDA&tab=chart     종목 화면 (탭: 요약·차트·전략 검증·시뮬레이션·가치평가·재무·투자 대가·뉴스·판단 기록)
  *   /?run=<id>&tab=...     저장된 결과 (공유 가능한 주소)
+ *   /?view=market          시장 정세 (시장 국면, 지수, 업종, 관심 종목 한눈에)
  *   /?view=history         판단 기록 · 적중률
  *   /?view=method          검증 방법
  * 라우터 라이브러리 없이 URLSearchParams + history API 로 처리한다. 탭 전환은 replaceState (뒤로 가기가 탭마다 쌓이지 않게).
@@ -11,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { analyze, api, type Horizon, type Me, type Quote, type Result, type RunsResponse, type WatchResponse } from "./api";
 import { PriceChart, type PriceLevel } from "./components/Charts";
 import { History, Home, RunsTable } from "./components/History";
+import Market from "./components/Market";
 import Method from "./components/Method";
 import { PlanCard, PlanSummary, PriceLevels, Reasons, RiskCard, ScoreDetail, Situation, TrendCard, VerdictHero } from "./components/Report";
 import { Progress, RunPanel, type StepState } from "./components/Run";
@@ -20,12 +22,13 @@ import { TabBar, type TabDef } from "./components/Tabs";
 import { MetaList } from "./components/ui";
 import { SECTOR_KO, big, date, dateTime, dirClass, pct, usd } from "./format";
 
-type View = "home" | "symbol" | "history" | "method";
+type View = "home" | "symbol" | "market" | "history" | "method";
 type Route = { view: View; symbol?: string; run?: string; tab?: string };
 
 function readRoute(): Route {
   const p = new URLSearchParams(location.search);
   const tab = p.get("tab") ?? undefined;
+  if (p.get("view") === "market") return { view: "market" };
   if (p.get("view") === "history") return { view: "history" };
   if (p.get("view") === "method") return { view: "method" };
   if (p.get("run")) return { view: "symbol", run: p.get("run")!, tab };
@@ -35,6 +38,7 @@ function readRoute(): Route {
 
 function routeUrl(r: Route) {
   if (r.view === "history") return "/?view=history";
+  if (r.view === "market") return "/?view=market";
   if (r.view === "method") return "/?view=method";
   const q = new URLSearchParams();
   if (r.run) q.set("run", r.run);
@@ -103,6 +107,7 @@ export default function App() {
         <div className="topsearch"><Search onPick={(s) => go({ view: "symbol", symbol: s })} /></div>
         <nav className="topnav" aria-label="주 메뉴">
           {nav("home", "분석", <path d="M5 20v-8M12 20V4M19 20v-5" />)}
+          {nav("market", "시장", <path d="M3 12h4l3-7 4 14 3-7h4" />)}
           {nav("history", "판단 기록", <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>)}
           {nav("method", "검증 방법", <><path d="M12 3.5l7.5 2.8V12c0 4.2-3.2 7.6-7.5 8.5-4.3-.9-7.5-4.3-7.5-8.5V6.3z" /><path d="M8.8 12.2l2.2 2.2 4.2-4.4" /></>)}
           <button onClick={toggleTheme} aria-label={theme === "dark" ? "밝은 테마로" : "어두운 테마로"} className="icon">
@@ -117,6 +122,7 @@ export default function App() {
       <main id="main" className="container">
         {route.view === "home" && <Home authed={!!me?.authenticated} onPick={(s) => go({ view: "symbol", symbol: s })} onOpen={(id) => go({ view: "symbol", run: id })} />}
         {route.view === "history" && <History onOpen={(id) => go({ view: "symbol", run: id })} />}
+        {route.view === "market" && <Market onOpen={(id) => go({ view: "symbol", run: id })} onPick={(s) => go({ view: "symbol", symbol: s })} />}
         {route.view === "method" && <Method authed={!!me?.authenticated} />}
         {route.view === "symbol" && (
           <SymbolPage key={route.run ?? route.symbol} route={route} me={me} theme={theme} onLogin={refreshMe}

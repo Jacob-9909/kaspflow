@@ -461,6 +461,28 @@ a:focus-visible, .term-btn:focus-visible { border-radius: var(--r-xs); } /* 모�
 details > .hint, details > .pn { margin-top: var(--s2); }
 .table-wrap + .btn { margin-top: var(--s3); }
 
+/* 시장 정세 */
+.mk-gauges { margin: var(--s5) 0 0; align-items: start; }
+.mk-gauges .zs + .zs { margin-top: 0; }
+.mk-row { display: grid; grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr); gap: var(--s5); align-items: start; }
+.mk-row > .card { margin: 0; }
+.spark { display: block; width: 96px; height: 28px; overflow: visible; }
+.spark path { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+.spark-cell { width: 112px; }
+.table tr.group th { padding-top: var(--s4); border-bottom: 1px solid var(--border-strong); font-size: var(--fs-label); font-weight: 600; color: var(--text-muted); text-align: left; }
+.segmented.seg-5 { grid-template-columns: repeat(5, auto); }
+.segmented.seg-5 label { padding: var(--s1) var(--s3); white-space: nowrap; }
+.panel-head .segmented { min-width: 0; }
+/* 관심 종목 표: 점수 칸의 바탕이 방향과 크기를 맡고 글자는 잉크로 (민감도 표와 같은 방식) */
+.matrix th, .matrix td { text-align: center; }
+.matrix thead th.span { border-bottom: 0; padding-bottom: 0; color: var(--text-muted); font-weight: 600; }
+.matrix th[scope="row"], .matrix thead tr:first-child th:first-child, .matrix td.l { text-align: left; }
+.matrix td.heat { min-width: 44px; color: var(--text); border-bottom-color: var(--surface); border-left: 2px solid var(--surface); }
+.matrix td.heat.strong { font-weight: 700; }
+.matrix td.heat.na { color: var(--text-faint); }
+.matrix thead th.sum { font-weight: 700; color: var(--text); }
+.matrix .vbadge { min-width: 44px; }
+
 /* 점수 계산 과정 (접어 둠) */
 .factor-help { max-width: 46em; margin: 0 0 var(--s5); }
 .score-detail > summary { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); width: auto; min-height: var(--h-md);
@@ -777,7 +799,7 @@ details summary:hover { color: var(--text); }
   .layout { grid-template-columns: minmax(0, 1fr); }
   .side { position: static; }
   .reasons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .verdict, .plan-row { grid-template-columns: minmax(0, 1fr); }
+  .verdict, .plan-row, .mk-row { grid-template-columns: minmax(0, 1fr); }
   .hz { max-width: 560px; }
   /* 지도는 왼쪽에 두고 두 묶음을 오른쪽에 세로로 */
   .situation { grid-template-columns: 220px minmax(0, 1fr); }
