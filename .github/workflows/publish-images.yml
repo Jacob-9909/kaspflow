@@ -19,9 +19,24 @@ concurrency:
   group: publish-images-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
+  # 배포 게이트다 (자동배포는 이 워크플로의 build-and-push 만 본다). PR 의 CI Backend 와 같은 것을 검사한다:
+  # DB 통합 테스트(postgres 서비스)와 운영 이미지 import 검사까지.
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,6 +47,11 @@ jobs:
       - name: backend 유닛 테스트
         working-directory: backend
         run: pip install -r requirements.txt && python -m unittest discover -s tests
+      - name: backend 운영 이미지 import 검사
+        working-directory: backend
+        run: |
+          docker build -q -t backend-ci .
+          docker run --rm backend-ci python -c "import app, pipeline, overview; print('backend image import OK')"
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -75,6 +95,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
+          build-args: GIT_SHA=${{ github.sha }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

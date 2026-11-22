@@ -20,6 +20,9 @@ def conninfo() -> str:
             f"user={e('POSTGRES_USER', 'crypto')} password={e('POSTGRES_PASSWORD', '')} connect_timeout=5")
 
 
+CACHE_WAIT_S = 3.0   # 캐시 읽기·쓰기가 DB 연결을 기다리는 시간. 넘으면 캐시 없이 간다 (풀 기본값 10초면 DB 장애 때 분석이 호출마다 멈춘다)
+
+
 class DB:
     def __init__(self, dsn: str | None = None):
         self.pool = ConnectionPool(dsn or conninfo(), min_size=1, max_size=6, open=False,
@@ -34,6 +37,11 @@ class DB:
     def init_schema(self) -> None:
         with self.pool.connection() as c:
             c.execute(SCHEMA.read_text())
+        self.prune_cache()
+
+    def prune_cache(self) -> None:
+        """한 달 넘은 캐시를 지운다 (기동할 때와 자동 판단 루프가 돌 때마다)."""
+        with self.pool.connection() as c:
             c.execute("DELETE FROM stock.cache WHERE fetched_at < now() - interval '30 days'")
 
     def ping(self) -> bool:
@@ -48,7 +56,7 @@ class DB:
     # --- 캐시 (market.Cache 프로토콜) ---
     def get(self, key: str, max_age_s: int):
         try:
-            with self.pool.connection() as c:
+            with self.pool.connection(timeout=CACHE_WAIT_S) as c:
                 row = c.execute("SELECT payload FROM stock.cache WHERE key = %s AND fetched_at > now() - make_interval(secs => %s)",
                                 (key, max_age_s)).fetchone()
             return row[0] if row else None
@@ -58,7 +66,7 @@ class DB:
 
     def set(self, key: str, payload) -> None:
         try:
-            with self.pool.connection() as c:
+            with self.pool.connection(timeout=CACHE_WAIT_S) as c:
                 c.execute("INSERT INTO stock.cache (key, payload, fetched_at) VALUES (%s, %s, now()) "
                           "ON CONFLICT (key) DO UPDATE SET payload = EXCLUDED.payload, fetched_at = now()", (key, Jsonb(payload)))
         except Exception as exc:  # noqa: BLE001

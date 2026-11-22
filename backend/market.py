@@ -80,13 +80,19 @@ def _jsonable(v):
     return str(v)
 
 
+MISS_TTL = 600   # 없는 종목·빈 응답은 10분만 기억한다
+
+
 def _cached(cache: Cache, key: str, ttl: int, fn):
+    """캐시 우선 조회. 결과가 없던 것도 잠깐 기억한다: 공개 경로에 없는 종목을 계속 넣어도 그때마다 바깥을 부르지 않게.
+    짧게만 기억하는 것은 yfinance 가 잠깐 빈 응답을 줄 때 멀쩡한 종목이 오래 막히지 않게 하려는 것이다."""
     hit = cache.get(key, ttl)
     if hit is not None:
         return hit
+    if cache.get(f"miss:{key}", MISS_TTL) is not None:
+        return None
     val = fn()
-    if val is not None:
-        cache.set(key, val)
+    cache.set(key if val is not None else f"miss:{key}", val if val is not None else 1)
     return val
 
 

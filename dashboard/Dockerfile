@@ -25,6 +25,7 @@ FROM nginx:1.27-alpine
 
 # 커스텀 nginx 설정(정적 서빙 + /api 프록시) 적용
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY security-headers.conf /etc/nginx/security-headers.conf
 
 # 1단계에서 만든 정적 파일을 nginx 웹 루트로 복사
 COPY --from=build /app/dist /usr/share/nginx/html

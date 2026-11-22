@@ -96,6 +96,50 @@ class TestAPI(unittest.TestCase):
         r = self.c.get("/health")
         self.assertEqual(r.status_code, 200)
         self.assertIn('"status":"ok"', r.text)   # infra/kaspflow-autodeploy.sh 가 이 문자열을 grep 한다
+        body = r.json()
+        self.assertEqual(body["version"], "dev")              # 이미지를 만든 커밋 (테스트에서는 GIT_SHA 가 없다)
+        self.assertIn("next_at", body["autorun"])
+        self.assertEqual(body["tuning"]["running"], False)
+
+    def test_security_headers_and_docs_off(self):
+        r = self.c.get("/health")
+        for k, v in appmod.SECURITY_HEADERS.items():
+            self.assertEqual(r.headers.get(k), v)
+        self.assertNotIn("strict-transport-security", r.headers)     # 평문 http 에는 HSTS 를 붙이지 않는다
+        self.assertIn("strict-transport-security", TestClient(appmod.app, base_url="https://testserver").get("/health").headers)
+        self.assertEqual(self.c.get("/docs").status_code, 404)        # 문서 화면은 API_DOCS=1 일 때만
+        self.assertEqual(self.c.get("/openapi.json").status_code, 404)
+
+    def test_public_routes_are_throttled_and_validated(self):
+        self.assertEqual(self.c.get("/runs?symbol=$$").status_code, 400)   # 예전에는 500
+        real, appmod.market.quote = appmod.market.quote, lambda sym, cache: {"symbol": sym}
+        limit, appmod.PUBLIC_RATE = appmod.PUBLIC_RATE, (3, 60.0)
+        appmod.S.rate.clear()
+        try:
+            codes = [self.c.get("/quote/SYN").status_code for _ in range(4)]
+        finally:
+            appmod.market.quote, appmod.PUBLIC_RATE = real, limit
+            appmod.S.rate.clear()
+        self.assertEqual(codes, [200, 200, 200, 429])
+
+    def test_autorun_once_records_failures(self):
+        import asyncio
+        self.db.watch = {"OK": "mid", "BAD": "mid"}
+
+        async def run(symbol, horizon, position, cache, llm, loader=None, weights=None):
+            if symbol == "BAD":
+                raise RuntimeError("boom")
+            async for ev in fake_run(symbol, horizon, position, cache, llm):
+                yield ev
+        appmod.pipeline.run = run
+        try:
+            failed = asyncio.run(appmod._autorun_once())
+        finally:
+            self.db.watch = {}
+        self.assertEqual(failed, ["BAD"])
+        self.assertEqual([r["symbol"] for r in self.db.saved.values()], ["OK"])
+        self.assertEqual(self.c.get("/health").json()["autorun"]["failed"], ["BAD"])
+        self.assertIn("BAD", self.c.get("/health").json()["last_error"])
 
     def test_auth_flow(self):
         self.assertFalse(self.c.get("/auth/me").json()["authenticated"])

@@ -5,15 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="미국 주식 매수·매도·관망 판단을 전략 백테스트 검증, 몬테카를로 시뮬레이션, 가치평가, 뉴스 감성, 투자 대가 관점으로 내는 검증기" />
     <meta name="theme-color" content="#17171c" />
-    <script>
-      /* 첫 화면부터 맞는 테마로 그린다 (깜박임 방지). 직접 고른 값이 없으면 OS 설정을 따른다 */
-      try { var t = localStorage.getItem("kf-theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"); document.documentElement.dataset.theme = t; } catch (e) {}
-    </script>
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="kaspflow 매매 검증기" />
+    <meta property="og:description" content="미국 주식 하나를 고르면 지금 어떤 상황인지 따져 보고 1개월, 3개월, 1년 기준으로 매수, 관망, 매도 중 하나를 근거와 함께 알려 줍니다." />
+    <meta name="twitter:card" content="summary" />
+    <script src="/theme.js"></script>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 17l5-6 4 4 8-10M14 5h6v6' fill='none' stroke='%23ff6069' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
     <title>kaspflow 매매 검증기</title>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>이 화면은 자바스크립트가 켜져 있어야 보입니다.</noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+from starlette.datastructures import MutableHeaders
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -53,6 +54,7 @@ MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_RUNS", "2"))
 NY = ZoneInfo("America/New_York")
 AUTORUN_AT = (16, 40)   # 관심 종목 자동 판단 시각 (뉴욕). 16:00 장 마감 뒤 일봉이 확정되고 나서
 WATCH_MAX = int(os.environ.get("WATCHLIST_MAX", "10"))   # 하루 NIM 호출 = 종목 수 x 9
+AUTORUN_RETRY_S, AUTORUN_RETRIES = 900.0, 3   # 자동 판단이 실패하면 15분 뒤 다시, 한 시각에 세 번까지
 TUNE_EVERY = timedelta(days=7)    # 가중치 자동 조정 주기 (한 주). 결과는 그때의 데이터만으로 정해져 자주 돌려도 조정이 쌓이지 않는다
 
 
@@ -65,6 +67,8 @@ class State:
     autorun: asyncio.Task | None = None
     weights: dict | None = None    # {"version": id, "weights": {기간: {모듈: w}}}. None 이면 verdict.WEIGHTS
     tuning: bool = False
+    rate: dict[str, deque] = defaultdict(deque)   # 공개 조회 경로의 IP 별 요청 시각
+    ops: dict = {}                 # 운영 상태 (/health 로 내보낸다): 기동 시각, 마지막 자동 판단·조정, 마지막 오류
 
 
 S = State()
@@ -90,7 +94,8 @@ async def lifespan(_: FastAPI):
         S.weights = {"version": last[0]["id"], "weights": last[0]["weights"]} if last else None
     except Exception as exc:  # noqa: BLE001 - 표가 아직 없거나 DB 가 늦으면 기본값으로
         log.warning("weights load failed: %r", exc)
-    log.info("kaspflow up: llm=%s model=%s weights=%s", S.llm.enabled, S.llm.model, (S.weights or {}).get("version"))
+    S.ops = {"started_at": datetime.now(timezone.utc).isoformat()}
+    log.info("kaspflow up: version=%s llm=%s model=%s weights=%s", VERSION, S.llm.enabled, S.llm.model, (S.weights or {}).get("version"))
     if os.environ.get("AUTORUN", "1") != "0":
         S.autorun = asyncio.create_task(_autorun_loop())
     yield
@@ -99,7 +104,39 @@ async def lifespan(_: FastAPI):
     S.db.close()
 
 
-app = FastAPI(title="kaspflow 주식 매매 검증기", version="2.0", lifespan=lifespan)
+VERSION = (os.environ.get("GIT_SHA") or "dev")[:7]   # 이미지를 만든 커밋 (publish-images.yml 이 넣는다)
+# API 문서 화면은 공개 서버에서 끈다. 숨긴다고 보호되는 것은 아니고(쓰기 경로는 로그인으로 막는다) 노출면을 줄일 뿐이다. 로컬에서는 API_DOCS=1
+_DOCS = os.environ.get("API_DOCS") == "1"
+app = FastAPI(title="kaspflow 주식 매매 검증기", version="2.0", lifespan=lifespan,
+              docs_url="/docs" if _DOCS else None, redoc_url=None, openapi_url="/openapi.json" if _DOCS else None)
+
+# OWASP Secure Headers Project 권장값 가운데 JSON API 에 해당하는 것. 화면(HTML)의 CSP 는 dashboard/nginx.conf 가 붙인다
+SECURITY_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
+                    "Cross-Origin-Resource-Policy": "same-origin", "X-Permitted-Cross-Domain-Policies": "none"}
+
+
+class SecurityHeaders:
+    """응답 머리에 보안 헤더를 붙인다. 본문 흐름은 건드리지 않는 순수 ASGI 라 실행 화면의 SSE 가 그대로 흐른다."""
+
+    def __init__(self, app):   # Starlette 가 app= 로 넘긴다
+        self.inner = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.inner(scope, receive, send)
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for k, v in SECURITY_HEADERS.items():
+                    headers.setdefault(k, v)
+                if scope.get("scheme") == "https":   # uvicorn --proxy-headers 가 X-Forwarded-Proto 로 맞춰 준다
+                    headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+            await send(message)
+        await self.inner(scope, receive, send_with_headers)
+
+
+app.add_middleware(SecurityHeaders)
 
 
 def _store():
@@ -139,6 +176,22 @@ def token_ok(token: str | None) -> bool:
 def _client_ip(req: Request) -> str:
     fwd = req.headers.get("x-forwarded-for")
     return fwd.split(",")[0].strip() if fwd else (req.client.host if req.client else "?")
+
+
+PUBLIC_RATE = (60, 60.0)   # 바깥(yfinance)을 부르는 공개 조회는 IP 마다 60초에 60번까지
+
+
+def _throttle(request: Request) -> None:
+    """시세·검색 같은 공개 조회의 남용 방지 (로그인 잠금과 같은 방식). 넘으면 429."""
+    limit, window = PUBLIC_RATE
+    if len(S.rate) > 5000:   # 주소가 끝없이 쌓이지 않게
+        S.rate.clear()
+    q, now = S.rate[_client_ip(request)], time.time()
+    while q and now - q[0] > window:
+        q.popleft()
+    if len(q) >= limit:
+        raise HTTPException(429, "요청이 너무 많습니다. 잠시 뒤 다시 시도하세요.")
+    q.append(now)
 
 
 class Login(BaseModel):
@@ -181,8 +234,13 @@ def me(request: Request):
 @app.get("/health")
 def health():
     db_ok = S.db.ping() if S.db else False
+    # status 는 배포 스크립트가 보는 값(DB 까지 연결됐는가)이다. 나머지는 사람이 운영 상태를 보는 용도
     body = {"status": "ok" if db_ok else "degraded", "db": db_ok, "llm": bool(S.llm and S.llm.enabled),
-            "model": S.llm.model if S.llm else None, "running": len(S.tasks)}
+            "model": S.llm.model if S.llm else None, "running": len(S.tasks), "version": VERSION,
+            "started_at": S.ops.get("started_at"),
+            "autorun": {"last_at": S.ops.get("autorun_at"), "failed": S.ops.get("autorun_failed", []),
+                        "next_at": _slot(datetime.now(timezone.utc), 1).isoformat()},
+            "tuning": {"last_at": S.ops.get("tune_at"), "running": S.tuning}, "last_error": S.ops.get("last_error")}
     return JSONResponse(body, status_code=200 if db_ok else 503)
 
 
@@ -196,7 +254,8 @@ async def market_overview():
 
 
 @app.get("/search")
-async def search(q: str = Query("", max_length=40)):
+async def search(request: Request, q: str = Query("", max_length=40)):
+    _throttle(request)
     try:
         return await asyncio.to_thread(market.search, q, _store())
     except Exception as exc:  # noqa: BLE001 - 검색 실패는 빈 목록
@@ -205,7 +264,8 @@ async def search(q: str = Query("", max_length=40)):
 
 
 @app.get("/quote/{symbol}")
-async def quote(symbol: str):
+async def quote(symbol: str, request: Request):
+    _throttle(request)
     try:
         sym = market.clean_symbol(symbol)
         return await asyncio.to_thread(market.quote, sym, _store())
@@ -222,6 +282,19 @@ def _sse(obj: dict) -> str:
     return f"data: {json.dumps(obj, ensure_ascii=False, default=str)}\n\n"
 
 
+async def _save(run_id: str, data: dict) -> bool:
+    """실행 결과 저장. DB 가 잠깐 안 될 때를 대비해 한 번 더 해 본다 (결과는 다시 만들려면 1분과 LLM 호출 9번이 든다)."""
+    for attempt in (1, 2):
+        try:
+            await asyncio.to_thread(S.db.save_run, run_id, data)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.error("save_run failed (attempt %s) %s: %r", attempt, data.get("symbol"), exc)
+            if attempt == 1:
+                await asyncio.sleep(1.0)
+    return False
+
+
 async def _job(symbol: str, horizon: str, position: dict | None, queue: asyncio.Queue):
     """분석 작업. 클라이언트가 끊겨도 끝까지 돌고 저장한다 (queue 에 넣기만 하고 아무도 안 읽어도 된다)."""
     async with S.sem:
@@ -229,10 +302,7 @@ async def _job(symbol: str, horizon: str, position: dict | None, queue: asyncio.
             async for ev in pipeline.run(symbol, horizon, position, _store(), S.llm, weights=S.weights):
                 if ev["type"] == "result":
                     run_id = str(uuid.uuid4())
-                    try:
-                        await asyncio.to_thread(S.db.save_run, run_id, ev["data"])
-                    except Exception as exc:  # noqa: BLE001 - 저장 실패해도 결과는 보여 준다
-                        log.error("save_run failed: %r", exc)
+                    if not await _save(run_id, ev["data"]):   # 저장 실패해도 결과는 보여 준다
                         run_id = None
                     ev = {"type": "done", "run_id": run_id, "data": ev["data"]}
                 await queue.put(ev)
@@ -240,7 +310,8 @@ async def _job(symbol: str, horizon: str, position: dict | None, queue: asyncio.
             await queue.put({"type": "error", "message": str(exc)})
         except Exception as exc:  # noqa: BLE001
             log.exception("analysis failed %s", symbol)
-            await queue.put({"type": "error", "message": f"분석 중 오류: {exc!r}"[:300]})
+            # 내부 예외 내용은 로그에만 남기고 화면에는 종류만 알린다
+            await queue.put({"type": "error", "message": f"분석 중 오류가 났습니다 ({type(exc).__name__}). 잠시 뒤 다시 실행하세요."})
         finally:
             await queue.put(None)
 
@@ -304,32 +375,55 @@ async def _autorun_symbol(symbol: str, horizon: str) -> None:
         async for ev in pipeline.run(symbol, horizon, None, _store(), S.llm, weights=S.weights):
             if ev["type"] == "result":
                 ev["data"]["meta"]["source"] = "auto"
-                await asyncio.to_thread(S.db.save_run, str(uuid.uuid4()), ev["data"])
+                if not await _save(str(uuid.uuid4()), ev["data"]):
+                    raise RuntimeError("자동 판단 결과를 저장하지 못했습니다")
 
 
 async def _autorun_loop() -> None:
     """관심 종목 자동 판단. 평일 장 마감 뒤 하루 한 번, 한 종목씩 차례로 돈다 (NIM 호출이 몰리지 않게).
     다시 뜨면 밀린 것부터 처리한다. 실패한 종목은 다음 시각에 다시 시도한다."""
     await asyncio.sleep(60)   # 기동 직후 자동배포 헬스체크와 겹치지 않게
+    retries = 0
     while True:
-        try:
-            items = await asyncio.to_thread(S.db.list_watchlist)
-            for w in autorun_due(items, datetime.now(timezone.utc)):
-                try:
-                    await _autorun_symbol(w["symbol"], w["horizon"])
-                    log.info("autorun ok %s %s", w["symbol"], w["horizon"])
-                except Exception as exc:  # noqa: BLE001 - 한 종목이 실패해도 나머지는 돈다
-                    log.warning("autorun failed %s: %r", w["symbol"], exc)
-        except Exception as exc:  # noqa: BLE001 - DB 가 잠깐 안 될 때
-            log.warning("autorun check failed: %r", exc)
+        failed = await _autorun_once()
         try:
             last = await asyncio.to_thread(S.db.weights_history, 1)
             if not last or datetime.now(timezone.utc) - last[0]["created_at"] > TUNE_EVERY:
                 await _tune()
+                S.ops["tune_at"] = datetime.now(timezone.utc).isoformat()
         except Exception as exc:  # noqa: BLE001 - 조정이 실패해도 지금 가중치로 계속 판단한다
             log.warning("tuning failed: %r", exc)
+            S.ops["last_error"] = f"tuning: {exc!r}"[:200]
+        try:
+            await asyncio.to_thread(S.db.prune_cache)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("cache prune failed: %r", exc)
         now = datetime.now(timezone.utc)
-        await asyncio.sleep(max(60.0, (_slot(now, 1) - now).total_seconds()))
+        wait = (_slot(now, 1) - now).total_seconds()
+        # 실패가 있으면 다음 날까지 기다리지 않고 곧 다시 본다 (이미 돈 종목은 autorun_due 가 건너뛴다). 계속 실패하면 그만두고 다음 시각에
+        retries = retries + 1 if failed and retries < AUTORUN_RETRIES else 0
+        await asyncio.sleep(max(60.0, min(wait, AUTORUN_RETRY_S) if retries else wait))
+
+
+async def _autorun_once() -> list[str]:
+    """밀린 관심 종목을 한 번 돈다. 실패한 종목 이름을 돌려준다 (DB 를 못 읽으면 ["*"])."""
+    failed: list[str] = []
+    try:
+        items = await asyncio.to_thread(S.db.list_watchlist)
+        for w in autorun_due(items, datetime.now(timezone.utc)):
+            try:
+                await _autorun_symbol(w["symbol"], w["horizon"])
+                log.info("autorun ok %s %s", w["symbol"], w["horizon"])
+            except Exception as exc:  # noqa: BLE001 - 한 종목이 실패해도 나머지는 돈다
+                log.warning("autorun failed %s: %r", w["symbol"], exc)
+                failed.append(w["symbol"])
+                S.ops["last_error"] = f"autorun {w['symbol']}: {exc!r}"[:200]
+    except Exception as exc:  # noqa: BLE001 - DB 가 잠깐 안 될 때
+        log.warning("autorun check failed: %r", exc)
+        failed = ["*"]
+        S.ops["last_error"] = f"autorun: {exc!r}"[:200]
+    S.ops.update(autorun_at=datetime.now(timezone.utc).isoformat(), autorun_failed=failed)
+    return failed
 
 
 async def _tune() -> None:
@@ -356,7 +450,8 @@ async def _tune() -> None:
         return {"version": vid, "weights": w}
 
     try:
-        S.weights = await asyncio.to_thread(work)
+        async with S.sem:   # 대형주 31개 x 10년 백테스트라 무겁다: 분석 두 개와 겹쳐 메모리 한도를 넘지 않게 실행 칸을 하나 잡는다
+            S.weights = await asyncio.to_thread(work)
     finally:
         S.tuning = False
 
@@ -447,12 +542,16 @@ async def watch_remove(symbol: str, request: Request):
 # ------------------------------------------------------------
 # 기록 · 적중률
 # ------------------------------------------------------------
-def _price_on(symbol: str, day: datetime) -> float | None:
-    """평가일(이후 첫 거래일) 종가. 10년 가격 캐시가 있으면 쓴다 (과거 구간은 바뀌지 않으니 오래된 캐시도 유효)."""
-    p = _store().get(f"yf:prices:{symbol}", 400 * 86400)
-    if not p:
+def _price_on(symbol: str, day: datetime, memo: dict | None = None) -> float | None:
+    """평가일(이후 첫 거래일) 종가. 10년 가격 캐시가 있으면 쓴다 (과거 구간은 바뀌지 않으니 오래된 캐시도 유효).
+    memo 를 주면 종목별 종가 열을 거기에 두고 다시 쓴다 (기록 화면은 줄마다 부르는데 캐시 한 건이 수백 KB 다)."""
+    memo = {} if memo is None else memo
+    if symbol not in memo:
+        p = _store().get(f"yf:prices:{symbol}", 400 * 86400)
+        memo[symbol] = market.close_series(p) if p else None
+    s = memo[symbol]
+    if s is None:
         return None
-    s = market.close_series(p)
     after = s[s.index >= pd.Timestamp(day.date())]
     return float(after.iloc[0]) if len(after) else None
 
@@ -461,8 +560,12 @@ def _price_on(symbol: str, day: datetime) -> float | None:
 async def runs(symbol: str | None = Query(None, max_length=16), limit: int = Query(50, ge=1, le=200),
                source: str | None = Query(None, pattern="^(auto|manual)$")):
     """source: auto 는 관심 종목 자동 판단만, manual 은 직접 실행한 것만, 없으면 전부."""
-    sym = market.clean_symbol(symbol) if symbol else None
+    try:
+        sym = market.clean_symbol(symbol) if symbol else None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     rows = await asyncio.to_thread(S.db.list_runs, sym, limit, source)
+    closes: dict = {}
     last = {}
     if rows:
         try:
@@ -474,7 +577,7 @@ async def runs(symbol: str | None = Query(None, max_length=16), limit: int = Que
     for r in rows:
         due = r["created_at"] + timedelta(days=HORIZON_DAYS[r["horizon"]])
         evaluated = now >= due
-        end_px = await asyncio.to_thread(_price_on, r["symbol"], due) if evaluated else last.get(r["symbol"])
+        end_px = await asyncio.to_thread(_price_on, r["symbol"], due, closes) if evaluated else last.get(r["symbol"])
         if evaluated and end_px is None:
             end_px = last.get(r["symbol"])
         ret = end_px / r["price"] - 1 if end_px else None

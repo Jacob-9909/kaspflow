@@ -16,6 +16,9 @@ on:
     branches: [main]
     paths: ["backend/**", ".github/workflows/ci-backend.yml"]
 
+permissions:
+  contents: read
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -46,4 +49,4 @@ jobs:
       - name: 운영 이미지 import 검사
         run: |
           docker build -q -t backend-ci .
-          docker run --rm backend-ci python -c "import app, pipeline; print('backend image import OK')"
+          docker run --rm backend-ci python -c "import app, pipeline, overview; print('backend image import OK')"

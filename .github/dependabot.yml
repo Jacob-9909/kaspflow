@@ -1,0 +1,20 @@
+# 의존성 갱신 PR. 한 달에 한 번, 생태계마다 한 PR 로 묶는다 (혼자 운영하는 저장소라 PR 수를 줄인다).
+# 보안 권고가 붙은 갱신은 이 주기와 상관없이 바로 PR 이 열린다 (저장소 설정의 Dependabot security updates).
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule: { interval: monthly }
+    groups: { python: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /dashboard
+    schedule: { interval: monthly }
+    groups: { npm: { patterns: ["*"] } }
+  - package-ecosystem: docker
+    directories: [/backend, /dashboard]
+    schedule: { interval: monthly }
+    groups: { images: { patterns: ["*"] } }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    groups: { actions: { patterns: ["*"] } }

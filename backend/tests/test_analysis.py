@@ -258,6 +258,28 @@ class TestPipeline(unittest.TestCase):
         json.dumps(res)  # 직렬화 가능해야 저장할 수 있다
         self.assertTrue(res["news"]["aggregate"]["available"])
 
+    def test_data_step_times_out(self):
+        import time
+        real, pipeline.DATA_TIMEOUT = pipeline.DATA_TIMEOUT, 0.05   # 응답 없는 시세 조회가 실행 칸을 계속 잡지 않는다
+
+        async def go():
+            async for _ in pipeline.run("SYN", "mid", None, MemCache(), L.ScriptedLLM(scripted), loader=lambda s, c: time.sleep(0.4)):
+                pass
+        try:
+            with self.assertRaisesRegex(LookupError, "초 안에 받지 못했습니다"):
+                run(go())
+        finally:
+            pipeline.DATA_TIMEOUT = real
+
+    def test_missing_symbol_is_remembered_briefly(self):
+        import market
+        cache, calls = MemCache(), []
+        fetch = lambda: calls.append(1)   # 없는 종목: None 을 돌려준다
+        self.assertIsNone(market._cached(cache, "yf:info:NOPE", 3600, fetch))
+        self.assertIsNone(market._cached(cache, "yf:info:NOPE", 3600, fetch))
+        self.assertEqual(len(calls), 1)                      # 두 번째는 바깥을 부르지 않는다
+        self.assertEqual(market._cached(cache, "yf:info:OK", 3600, lambda: {"a": 1}), {"a": 1})
+
     def test_llm_failures_fall_back(self):
         llm = L.ScriptedLLM(lambda role, p, s: RuntimeError("boom"))
         res = self.collect(llm)[-1]["data"]

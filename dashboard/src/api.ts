@@ -165,8 +165,15 @@ export type StreamEvent =
   | { type: "done"; run_id: string | null; data: Result }
   | { type: "error"; message: string };
 
+const TIMEOUT_MS = 30_000;   // 응답 없는 요청을 끝없이 기다리지 않는다 (불러오는 중 표시가 계속 도는 것보다 다시 시도가 낫다)
+
 async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`/api${path}`, { credentials: "same-origin", ...init });
+  let r: Response;
+  try {
+    r = await fetch(`/api${path}`, { credentials: "same-origin", signal: AbortSignal.timeout(TIMEOUT_MS), ...init });
+  } catch (e) {
+    throw new Error((e as Error).name === "TimeoutError" ? "서버 응답이 늦습니다. 잠시 뒤 다시 시도하세요." : "서버에 연결하지 못했습니다. 네트워크를 확인하세요.");
+  }
   if (!r.ok) {
     let msg = `${r.status}`;
     try {
@@ -212,7 +219,8 @@ export function analyze(symbol: string, horizon: Horizon, position: { qty: numbe
   const es = new EventSource(`/api/analyze/${encodeURIComponent(symbol)}?${q}`);
   let finished = false;
   es.onmessage = (m) => {
-    const ev = JSON.parse(m.data) as StreamEvent;
+    let ev: StreamEvent;
+    try { ev = JSON.parse(m.data) as StreamEvent; } catch { return; }   // 깨진 조각 하나로 진행 표시가 멈추지 않게
     if (ev.type === "done" || ev.type === "error") {
       finished = true;
       es.close();

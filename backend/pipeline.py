@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -38,6 +39,7 @@ NY = ZoneInfo("America/New_York")
 DISCLAIMER = ("이 결과는 공개 데이터와 통계 모델로 만든 참고 자료이며 투자 권유가 아닙니다. 과거 성과와 시뮬레이션은 "
               "미래 수익을 보장하지 않습니다. 매매 판단과 책임은 본인에게 있습니다.")
 LLM_TIMEOUT = {"news": 100, "personas": 110, "cio": 80}
+DATA_TIMEOUT = 90   # 시세·재무·뉴스를 모으는 단계 전체 (초)
 
 
 def _ev(kind: str, **kw) -> dict:
@@ -89,8 +91,12 @@ async def run(symbol: str, horizon: str, position: dict | None, cache, llm, load
             kw["ms"] = int((time.monotonic() - stamps[name]) * 1000)
         return _ev("step", step=name, status=status, **kw)
 
+    calls0 = getattr(llm, "calls", None)
     yield step("data", "running")
-    b = await asyncio.to_thread(loader, symbol, cache)
+    try:   # yfinance 는 응답이 없어도 스스로 끊지 않는다. 여기서 끊지 않으면 실행 칸(동시 2개)을 계속 잡아 다른 분석과 자동 판단이 멈춘다
+        b = await asyncio.wait_for(asyncio.to_thread(loader, symbol, cache), DATA_TIMEOUT)
+    except asyncio.TimeoutError as exc:
+        raise LookupError(f"{symbol} 데이터를 {DATA_TIMEOUT}초 안에 받지 못했습니다. 잠시 뒤 다시 실행하세요.") from exc
     info = b["info"]
     qt = info.get("quoteType") or "EQUITY"
     ppy = 365 if qt == "CRYPTOCURRENCY" else 252
@@ -208,7 +214,8 @@ async def run(symbol: str, horizon: str, position: dict | None, cache, llm, load
         "news": {"aggregate": sent, "items": items[:40], "error": news_err},
         "personas": panel, "chart": _chart(df_all),
         "meta": {"duration_ms": int((time.monotonic() - started) * 1000), "llm_model": getattr(llm, "model", None),
-                 "llm_calls": getattr(llm, "calls", None), "narrative_error": narr_err, "narrative_dropped": narr_dropped,
+                 "llm_calls": (llm.calls - calls0) if isinstance(calls0, int) else calls0,   # 이 실행에서 부른 횟수 (calls 는 프로세스 누적)
+                 "app_version": (os.environ.get("GIT_SHA") or "dev")[:7], "weights_version": (weights or {}).get("version"), "narrative_error": narr_err, "narrative_dropped": narr_dropped,
                  "weights_version": (weights or {}).get("version"),
                  "data_fetched_at": b.get("fetched_at"), "disclaimer": DISCLAIMER},
     }
