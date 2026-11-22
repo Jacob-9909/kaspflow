@@ -8,7 +8,7 @@
  *   /?view=method          검증 방법
  * 라우터 라이브러리 없이 URLSearchParams + history API 로 처리한다. 탭 전환은 replaceState (뒤로 가기가 탭마다 쌓이지 않게).
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { analyze, api, type Horizon, type Me, type Quote, type Result, type RunsResponse, type WatchResponse } from "./api";
 import { PriceChart, type PriceLevel } from "./components/Charts";
 import { History, Home, RunsTable } from "./components/History";
@@ -207,13 +207,19 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
     }, 50);
   };
 
+  // 실행 중에 다른 화면으로 가면 진행 상황 수신을 끊는다. 끊지 않으면 끝났을 때 onRunSaved 가 보던 화면을 버리고 결과 화면으로 끌고 간다.
+  // 분석 자체는 서버에서 끝까지 돌고 판단 기록에 저장된다.
+  const stopStream = useRef<(() => void) | null>(null);
+  useEffect(() => () => stopStream.current?.(), []);
+
   const run = (h: Horizon, pos: { qty: number; avg: number } | null) => {
     if (!symbol) return;
     setRunning(true);
     setError(null);
     setSteps(null);
     onTab("summary");
-    analyze(symbol, h, pos, (ev) => {
+    stopStream.current?.();
+    stopStream.current = analyze(symbol, h, pos, (ev) => {
       if (ev.type === "start") {
         setQueued(ev.queued);
         setSteps(ev.steps.map(([key, label]) => ({ key, label, status: "wait" })));

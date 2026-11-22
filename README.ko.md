@@ -45,4 +45,4 @@ docker compose up --build     # http://localhost:8501
 
 ## 문서
 
-- [아키텍처](docs/architecture.md) · [검증 방법론](docs/methodology.md) · [oracle_vm 런북](infra/vm-setup.md)
+- [아키텍처](docs/architecture.md) · [검증 방법론](docs/methodology.md) · [운영 점검과 보강](docs/hardening.md) · [oracle_vm 런북](infra/vm-setup.md)

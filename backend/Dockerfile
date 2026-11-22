@@ -3,6 +3,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+# 이미지를 만든 커밋. /health 의 version 과 실행 결과의 meta.app_version 에 나온다
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

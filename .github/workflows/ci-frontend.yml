@@ -11,6 +11,9 @@ on:
     branches: [main]
     paths: ["dashboard/**", ".github/workflows/ci-frontend.yml"]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,3 +30,8 @@ jobs:
       - run: npm ci
       - name: 타입 검사 + 빌드
         run: npm run build
+      - name: 운영 이미지 빌드 + nginx 설정 검사
+        run: |
+          docker build -q -t dashboard-ci .
+          # 설정의 proxy_pass 가 compose 서비스 이름(backend)을 쓰므로 검사할 때만 이름을 풀어 준다
+          docker run --rm --add-host backend:127.0.0.1 dashboard-ci nginx -t

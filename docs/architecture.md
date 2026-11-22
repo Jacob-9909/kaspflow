@@ -56,6 +56,7 @@ sequenceDiagram
 | `simulation.py` | 몬테카를로, 매매 계획, 유사 국면, 리스크 |
 | `fundamentals.py` | 품질(피오트로스키, 알트만), DCF·역DCF·PEG·그레이엄·EPV, 컨센서스 |
 | `news.py` / `personas.py` | NIM 뉴스 분류·집계, 투자 대가 체크리스트 + 의견 |
+| `overview.py` | 시장 정세 요약 (`/market`): 지수, 변동성, 금리, 업종 ETF, 다른 자산. 30분 캐시 |
 | `verdict.py` | 기술적·국면 점수, 기간별 가중 합산, 지금 할 일 조언(규칙, 다른 기간 판단 반영), 위원장 해설 |
 | `llm.py` | NIM 클라이언트 (키 교대, 분당 제한, 재시도, 대체 모델, 캐시) |
 | `db.py` / `schema.sql` | psycopg 풀, `stock.cache`, `stock.analysis_run` |
