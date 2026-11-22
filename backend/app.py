@@ -79,6 +79,14 @@ class NullStore(market.NullCache):
         return False
 
 
+def effective_weights(row: dict) -> dict:
+    """저장된 조정 결과에서 실제로 쓸 가중치. 채택된 기간만 저장된 값을 쓰고, 채택되지 않은 기간(과 초기화)은 지금 코드의 기본값을 쓴다.
+    채택 안 된 기간에 저장된 값은 그때 기본값의 사본이라, 그대로 쓰면 기본값을 고쳐도 다음 조정까지 옛 값으로 판단한다."""
+    rep = (row.get("report") or {}).get("horizons") or {}
+    stored = row.get("weights") or {}
+    return {h: stored[h] if (rep.get(h) or {}).get("adopted") and h in stored else vd.WEIGHTS[h] for h in vd.WEIGHTS}
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     S.sem = asyncio.Semaphore(MAX_CONCURRENT)
@@ -91,7 +99,7 @@ async def lifespan(_: FastAPI):
     S.llm = NimLLM.from_env(cache=S.db)
     try:
         last = await asyncio.to_thread(S.db.weights_history, 1)
-        S.weights = {"version": last[0]["id"], "weights": last[0]["weights"]} if last else None
+        S.weights = {"version": last[0]["id"], "weights": effective_weights(last[0])} if last else None
     except Exception as exc:  # noqa: BLE001 - 표가 아직 없거나 DB 가 늦으면 기본값으로
         log.warning("weights load failed: %r", exc)
     S.ops = {"started_at": datetime.now(timezone.utc).isoformat()}

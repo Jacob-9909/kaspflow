@@ -282,6 +282,15 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(appmod.S.weights["version"], 7)
         self.assertEqual(self.db.saved_weights[2], {"reset": True})
 
+    def test_effective_weights_follow_code_defaults(self):
+        old = {h: {**w, "regime": 0.99} for h, w in appmod.vd.WEIGHTS.items()}     # 예전 기본값이 저장돼 있다고 치고
+        row = {"weights": old, "report": {"horizons": {"short": {"adopted": True}, "mid": {"adopted": False}}}}
+        w = appmod.effective_weights(row)
+        self.assertEqual(w["short"]["regime"], 0.99)                                # 채택된 기간은 저장된 값
+        self.assertEqual(w["mid"], appmod.vd.WEIGHTS["mid"])                        # 채택 안 된 기간은 지금 기본값
+        self.assertEqual(w["long"], appmod.vd.WEIGHTS["long"])                      # 보고서에 없는 기간도
+        self.assertEqual(appmod.effective_weights({"weights": old, "report": {"reset": True}}), appmod.vd.WEIGHTS)
+
     def test_judge(self):
         self.assertTrue(appmod.judge("buy", 0.03))
         self.assertFalse(appmod.judge("buy", 0.01))

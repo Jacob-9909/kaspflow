@@ -25,13 +25,15 @@ MODULES = {
     "consensus": "애널리스트 컨센서스", "valuation": "밸류에이션", "quality": "재무 품질", "personas": "투자 대가 패널",
     "regime": "시장 국면",
 }
+# 시장 국면은 2026-11-22 에 절반으로 낮췄다 (15/8/4% -> 8/4/2%). 종목마다 다른 정보가 아니라 모든 종목 점수를 같은 폭으로 밀고,
+# 백테스트 IC 가 -0.02~-0.04 로 수익률을 설명하지 못했다. 줄인 몫은 나머지 모듈에 원래 비율대로 나눴다.
 WEIGHTS = {
-    "short": {"technical": .22, "strategies": .22, "analogs": .08, "sentiment": .16, "consensus": .06,
-              "valuation": .04, "quality": .02, "personas": .05, "regime": .15},
-    "mid": {"technical": .12, "strategies": .15, "analogs": .06, "sentiment": .10, "consensus": .12,
-            "valuation": .15, "quality": .12, "personas": .10, "regime": .08},
+    "short": {"technical": .24, "strategies": .24, "analogs": .09, "sentiment": .17, "consensus": .06,
+              "valuation": .04, "quality": .02, "personas": .06, "regime": .08},
+    "mid": {"technical": .13, "strategies": .16, "analogs": .06, "sentiment": .10, "consensus": .13,
+            "valuation": .16, "quality": .12, "personas": .10, "regime": .04},
     "long": {"technical": .04, "strategies": .05, "analogs": .02, "sentiment": .04, "consensus": .10,
-             "valuation": .28, "quality": .25, "personas": .18, "regime": .04},
+             "valuation": .29, "quality": .26, "personas": .18, "regime": .02},
 }
 BUY_TH, STRONG_TH = 0.15, 0.35
 HORIZON_DAYS = {"short": 30, "mid": 91, "long": 365}   # 적중 평가까지 기다리는 달력 일수
