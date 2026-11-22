@@ -4,7 +4,7 @@
  */
 import { useEffect, useRef } from "react";
 import {
-  ColorType, CrosshairMode, LineStyle, createChart,
+  CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineSeries, LineStyle, createChart, createSeriesMarkers,
   type SeriesMarker, type Time, type UTCTimestamp,
 } from "lightweight-charts";
 import type { Candle, Fan, FieldRow, Marker, Point } from "../api";
@@ -34,15 +34,15 @@ export function PriceChart({ candles, sma50, sma200, markers, levels, theme, hei
     if (!el.current || candles.length === 0) return;
     const up = css("--up"), down = css("--down");
     const chart = createChart(el.current, baseOptions());
-    const series = chart.addCandlestickSeries({ upColor: up, downColor: down, borderUpColor: up, borderDownColor: down,
+    const series = chart.addSeries(CandlestickSeries, { upColor: up, downColor: down, borderUpColor: up, borderDownColor: down,
       wickUpColor: up, wickDownColor: down });
     series.setData(candles.map(([t, o, h, l, c]) => ({ time: t as UTCTimestamp, open: o, high: h, low: l, close: c })));
-    const vol = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "", lastValueVisible: false, priceLineVisible: false });
+    const vol = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "", lastValueVisible: false, priceLineVisible: false });
     vol.priceScale().applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
     vol.setData(candles.map(([t, o, , , c, v]) => ({ time: t as UTCTimestamp, value: v, color: c >= o ? css("--up-weak") : css("--down-weak") })));
     const line = (pts: Point[] | undefined, color: string) => {
       if (!pts?.length) return;
-      const s = chart.addLineSeries({ color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      const s = chart.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
       s.setData(pts.map(([t, v]) => ({ time: t as UTCTimestamp, value: v })));
     };
     line(sma50, css("--sma50"));
@@ -52,7 +52,7 @@ export function PriceChart({ candles, sma50, sma200, markers, levels, theme, hei
       m.side === "buy"
         ? { time: m.time as UTCTimestamp, position: "belowBar", shape: "arrowUp", color: up }
         : { time: m.time as UTCTimestamp, position: "aboveBar", shape: "arrowDown", color: down, text: m.ret === undefined ? "매도" : pct(m.ret, 1) });
-    series.setMarkers(mk);
+    createSeriesMarkers(series, mk);   // lightweight-charts 5: 표시는 시리즈 메서드가 아니라 플러그인으로 붙인다
     for (const lv of levels ?? []) {
       series.createPriceLine({ price: lv.price, color: css(lv.tone === "accent" ? "--accent" : `--${lv.tone}`), lineWidth: 1,
         lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: lv.label });
@@ -69,7 +69,7 @@ export function EquityChart({ a, b, aLabel, bLabel, theme }: { a: Point[]; b: Po
     if (!el.current || a.length === 0) return;
     const chart = createChart(el.current, { ...baseOptions(), rightPriceScale: { borderColor: css("--border"), mode: 1 } });
     const add = (pts: Point[], color: string, title: string) => {
-      const s = chart.addLineSeries({ color, lineWidth: 2, title, priceLineVisible: false, priceFormat: { type: "custom", formatter: (v: number) => pct(v - 1, 0) } });
+      const s = chart.addSeries(LineSeries, { color, lineWidth: 2, title, priceLineVisible: false, priceFormat: { type: "custom", formatter: (v: number) => pct(v - 1, 0) } });
       s.setData(pts.map(([t, v]) => ({ time: t as UTCTimestamp, value: v })));
     };
     add(b, css("--text-faint"), bLabel);

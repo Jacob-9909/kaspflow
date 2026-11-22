@@ -8,7 +8,7 @@
  *   /?view=method          검증 방법
  * 라우터 라이브러리 없이 URLSearchParams + history API 로 처리한다. 탭 전환은 replaceState (뒤로 가기가 탭마다 쌓이지 않게).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { analyze, api, type Horizon, type Me, type Quote, type Result, type RunsResponse, type WatchResponse } from "./api";
 import { PriceChart, type PriceLevel } from "./components/Charts";
 import { History, Home, RunsTable } from "./components/History";
@@ -90,7 +90,7 @@ export default function App() {
   }, []);
 
   // 아이콘은 모바일 하단 막대에서만 보인다 (styles.css .nav-ico)
-  const nav = (v: View, label: string, icon: JSX.Element) => (
+  const nav = (v: View, label: string, icon: ReactNode) => (
     <button className={route.view === v ? "on" : ""} aria-current={route.view === v ? "page" : undefined} onClick={() => go({ view: v })}>
       <svg className="nav-ico" viewBox="0 0 24 24" aria-hidden="true">{icon}</svg>{label}
     </button>

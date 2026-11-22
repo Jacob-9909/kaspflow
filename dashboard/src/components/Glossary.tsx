@@ -31,7 +31,7 @@ export function Term({ k, children }: { k: keyof typeof GLOSSARY | string; child
   const id = useId();
   const ref = useRef<HTMLSpanElement>(null);
   const pop = useRef<HTMLSpanElement>(null);
-  const hideTimer = useRef<number>();
+  const hideTimer = useRef<number | undefined>(undefined);
   const open = pinned || peek;
 
   const show = () => { window.clearTimeout(hideTimer.current); setPeek(true); };
