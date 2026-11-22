@@ -73,11 +73,17 @@ class DB:
                       (run_id, r["symbol"], r["name"], r["horizon"], v["verdict"], v["score"], v["confidence"],
                        r["quote"]["price"], r["meta"]["duration_ms"], Jsonb(r)))
 
-    def list_runs(self, symbol: str | None, limit: int) -> list[dict]:
+    def list_runs(self, symbol: str | None, limit: int, source: str | None = None) -> list[dict]:
+        where, args = [], []
+        if symbol:
+            where.append("symbol = %s")
+            args.append(symbol)
+        if source:   # 자동 판단은 meta.source 가 'auto', 직접 실행은 값이 없다
+            where.append("result->'meta'->>'source' " + ("= 'auto'" if source == "auto" else "IS DISTINCT FROM 'auto'"))
         sql = ("SELECT id, symbol, name, created_at, horizon, verdict, score, confidence, price, "
                "result->'narrative'->>'headline', result->'position', result->'meta'->>'source' FROM stock.analysis_run "
-               + ("WHERE symbol = %s " if symbol else "") + "ORDER BY created_at DESC LIMIT %s")
-        args = (symbol, limit) if symbol else (limit,)
+               + ("WHERE " + " AND ".join(where) + " " if where else "") + "ORDER BY created_at DESC LIMIT %s")
+        args = (*args, limit)
         with self.pool.connection() as c:
             rows = c.execute(sql, args).fetchall()
         keys = ("id", "symbol", "name", "created_at", "horizon", "verdict", "score", "confidence", "price", "headline", "position", "source")
@@ -110,6 +116,24 @@ class DB:
             else:
                 w["prev"] = run
         return list(out.values())
+
+    def watch_overview(self) -> list[dict]:
+        """관심 종목마다 가장 최근 판단(같은 종목·기간)에서 화면에 쓸 조각만 꺼낸다 (전체 결과는 한 건에 수백 KB)."""
+        sql = ("SELECT w.symbol, w.horizon, r.id, r.created_at, r.name, r.price, r.change, r.verdicts, r.modules, r.headline, r.action "
+               "FROM stock.watchlist w LEFT JOIN LATERAL (SELECT id, created_at, name, price, result->'quote'->'change' AS change, "
+               "result->'verdicts' AS verdicts, result->'modules' AS modules, result->'narrative'->>'headline' AS headline, "
+               "result->'advice'->>'action' AS action FROM stock.analysis_run a "
+               "WHERE a.symbol = w.symbol AND a.horizon = w.horizon ORDER BY created_at DESC LIMIT 1) r ON true "
+               "ORDER BY w.added_at, w.symbol")
+        with self.pool.connection() as c:
+            rows = c.execute(sql).fetchall()
+        out = []
+        for sym, hz, rid, at, name, price, change, verdicts, modules, headline, action in rows:
+            out.append({"symbol": sym, "horizon": hz, "run_id": rid and str(rid), "created_at": at, "name": name, "price": price, "change": change,
+                        "headline": headline, "action": action,
+                        "verdicts": {h: {k: v.get(k) for k in ("verdict", "label", "strong", "score")} for h, v in (verdicts or {}).items()},
+                        "modules": [{k: m.get(k) for k in ("key", "label", "score", "confidence", "available")} for m in (modules or [])]})
+        return out
 
     def add_watch(self, symbol: str, horizon: str) -> None:
         with self.pool.connection() as c:

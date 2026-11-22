@@ -218,6 +218,7 @@ export function ZoneScale({ value, min, max, zones, fmt, label }: {
   let start = min;
   const segs = zones.map((zn) => { const s = { ...zn, from: start }; start = zn.to; return s; });
   const cur = segs.find((s) => value <= s.to) ?? segs[segs.length - 1];
+  const grow = (s: { from: number; to: number }) => ((s.to - s.from) / (max - min)) * 100;   // 범위가 1 보다 작아도(-20%~+20%) 막대를 다 채우게 몫으로
   return (
     <figure className="zs">
       <figcaption>{label} <b className="num">{fmt(value)}</b> <span className="zs-now">{cur.label}</span></figcaption>
@@ -226,11 +227,11 @@ export function ZoneScale({ value, min, max, zones, fmt, label }: {
         {segs.slice(0, -1).map((s) => <span key={s.label} style={{ left: `${x(s.to)}%` }}>{fmt(s.to)}</span>)}
       </div>
       <div className="zs-track" role="img" aria-label={`${label} ${fmt(value)}, ${cur.label} 구간 (${zones.map((z) => z.label).join(", ")})`}>
-        {segs.map((s) => <span key={s.label} className={`zs-seg${s === cur ? " on" : ""}`} style={{ flexGrow: s.to - s.from }} />)}
+        {segs.map((s) => <span key={s.label} className={`zs-seg${s === cur ? " on" : ""}`} style={{ flexGrow: grow(s) }} />)}
         <span className="zs-pin" style={{ left: `${x(value)}%` }} />
       </div>
       <div className="zs-labels" aria-hidden="true">
-        {segs.map((s) => <span key={s.label} className={s === cur ? "on" : ""} style={{ flexGrow: s.to - s.from }}>{s.label}</span>)}
+        {segs.map((s) => <span key={s.label} className={s === cur ? "on" : ""} style={{ flexGrow: grow(s) }}>{s.label}</span>)}
       </div>
     </figure>
   );

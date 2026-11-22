@@ -67,7 +67,7 @@ export const MODULE_TAB: Record<string, string> = {
 
 /** 지금 상황을 보는 두 축. 회사 = 무엇을 사는가, 타이밍 = 언제 사는가.
  *  판단 엔진의 기간 가중치도 이 축을 따른다 (단기는 타이밍 쪽, 장기는 회사 쪽 모듈이 크다: backend/verdict.py WEIGHTS). */
-const GROUPS = [
+export const GROUPS = [
   { key: "company", label: "회사", sub: "가치, 재무, 전문가 평가", mods: ["valuation", "quality", "consensus", "personas"], words: ["약함", "보통", "좋음"] },
   { key: "timing", label: "타이밍", sub: "추세, 뉴스, 시장 분위기", mods: ["technical", "strategies", "analogs", "sentiment", "regime"], words: ["나쁨", "보통", "좋음"] },
 ] as const;
@@ -78,13 +78,13 @@ export const SIGNAL_WORD: Record<string, [string, string, string]> = {
   personas: ["부정적", "엇갈림", "긍정적"], technical: ["약세", "중립", "강세"], strategies: ["매도 신호", "신호 없음", "매수 신호"],
   analogs: ["약했음", "평소와 비슷", "강했음"], sentiment: ["부정적", "잠잠", "긍정적"], regime: ["불안", "보통", "우호적"],
 };
-const level = (s: number) => (s >= BUY_TH ? 2 : s <= -BUY_TH ? 0 : 1);
-const LEVEL_CLS = ["down", "flat", "up"] as const;
+export const level = (s: number) => (s >= BUY_TH ? 2 : s <= -BUY_TH ? 0 : 1);
+export const LEVEL_CLS = ["down", "flat", "up"] as const;
 
 /** 탭 머리의 결론: 그 모듈의 말(저평가, 약세 등)을 크게, 0 기준 막대와 점수, 아래에 요약 한 문단.
  *  요약 탭 '지금 상황' 과 같은 말을 쓴다. m 을 주면 모듈 카드 대신 그 값을 쓴다 (기간마다 다른 유사 국면). */
-export function ModuleLead({ r, k, m, title }: { r: Result; k: string; m?: { available: boolean; score: number; summary: string }; title?: string }) {
-  const x = m ?? r.modules.find((c) => c.key === k);
+export function ModuleLead({ r, k, m, title }: { r?: Result; k: string; m?: { available: boolean; score: number; summary: string }; title?: string }) {
+  const x = m ?? r?.modules.find((c) => c.key === k);
   if (!x) return null;
   const lv = level(x.score), cls = x.available ? LEVEL_CLS[lv] : "flat";
   return (
@@ -101,7 +101,7 @@ export function ModuleLead({ r, k, m, title }: { r: Result; k: string; m?: { ava
 }
 
 /** 묶음 점수: 모듈 점수를 신뢰도로 가중 평균한다 (기간 가중치와 무관한 '지금 상황'). 쓸 수 있는 모듈이 없으면 null */
-function groupScore(mods: ModuleCard[]): number | null {
+export function groupScore(mods: Pick<ModuleCard, "available" | "confidence" | "score">[]): number | null {
   const ok = mods.filter((m) => m.available);
   const w = ok.reduce((a, m) => a + m.confidence, 0);
   return w > 0 ? ok.reduce((a, m) => a + m.confidence * m.score, 0) / w : null;

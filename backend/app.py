@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import engine_backtest
+import overview
 import market
 import pipeline
 import tuning
@@ -183,6 +184,15 @@ def health():
     body = {"status": "ok" if db_ok else "degraded", "db": db_ok, "llm": bool(S.llm and S.llm.enabled),
             "model": S.llm.model if S.llm else None, "running": len(S.tasks)}
     return JSONResponse(body, status_code=200 if db_ok else 503)
+
+
+@app.get("/market")
+async def market_overview():
+    """시장 정세: 지수, 변동성, 금리, 업종, 다른 자산 (30분 캐시)."""
+    try:
+        return await asyncio.to_thread(overview.market_overview, _store())
+    except LookupError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @app.get("/search")
@@ -400,6 +410,13 @@ async def watchlist():
             "next_run": _slot(datetime.now(timezone.utc), 1).isoformat(), "max": WATCH_MAX}
 
 
+@app.get("/watchlist/overview")
+async def watchlist_overview():
+    """관심 종목 한눈에 보기: 종목마다 가장 최근 판단의 기간별 판단, 모듈 점수, 지금 할 일."""
+    rows = await asyncio.to_thread(S.db.watch_overview)
+    return {"items": [{**r, "created_at": r["created_at"] and r["created_at"].isoformat()} for r in rows]}
+
+
 @app.post("/watchlist")
 async def watch_add(body: Watch, request: Request):
     _guard(request)
@@ -441,9 +458,11 @@ def _price_on(symbol: str, day: datetime) -> float | None:
 
 
 @app.get("/runs")
-async def runs(symbol: str | None = Query(None, max_length=16), limit: int = Query(50, ge=1, le=200)):
+async def runs(symbol: str | None = Query(None, max_length=16), limit: int = Query(50, ge=1, le=200),
+               source: str | None = Query(None, pattern="^(auto|manual)$")):
+    """source: auto 는 관심 종목 자동 판단만, manual 은 직접 실행한 것만, 없으면 전부."""
     sym = market.clean_symbol(symbol) if symbol else None
-    rows = await asyncio.to_thread(S.db.list_runs, sym, limit)
+    rows = await asyncio.to_thread(S.db.list_runs, sym, limit, source)
     last = {}
     if rows:
         try:

@@ -29,3 +29,5 @@ node_modules/
 dashboard/node_modules/
 dashboard/dist/
 *.tsbuildinfo
+
+.playwright-mcp/

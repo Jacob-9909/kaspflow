@@ -119,6 +119,25 @@ export interface WatchRun { id: string; created_at: string; verdict: Verdict; sc
 export interface WatchItem { symbol: string; horizon: Horizon; added_at: string; name: string | null; last: WatchRun | null; prev: WatchRun | null }
 export interface WatchResponse { items: WatchItem[]; next_run: string; max: number }
 
+export interface MarketRow {
+  symbol: string; name: string; price: number; as_of: string; d1: number | null; w1: number | null; m1: number | null; m3: number | null;
+  y1: number | null; ytd: number | null; vs_50: number | null; vs_200: number | null; from_high: number; spark: number[];
+}
+export interface MarketOverview {
+  as_of: string; fetched_at: string;
+  regime: { available: boolean; score: number; confidence: number; summary: string; detail: Record<string, unknown> };
+  vix: null | { value: number; word: string; d1?: number | null; w1?: number | null; m1?: number | null; spark?: number[] };
+  tnx: null | { value: number; change_3m: number | null };
+  indexes: MarketRow[]; assets: MarketRow[]; sectors: MarketRow[];
+  breadth: { total: number; above_200: number; above_50: number };
+}
+export interface WatchOverviewItem {
+  symbol: string; horizon: Horizon; run_id: string | null; created_at: string | null; name: string | null; price: number | null; change: number | null;
+  headline: string | null; action: string | null;
+  verdicts: Partial<Record<Horizon, { verdict: Verdict; label: string; strong: boolean; score: number }>>;
+  modules: { key: string; label: string; score: number; confidence: number; available: boolean }[];
+}
+
 export type WeightMap = Record<Horizon, Record<string, number>>;
 export interface TuneReport {
   mode: "backtest" | "all"; n: number; n_eff: number; n_live: number; adopted: boolean; reason: string;
@@ -166,7 +185,12 @@ export const api = {
   logout: () => getJSON<{ ok: boolean }>("/auth/logout", { method: "POST" }),
   search: (q: string) => getJSON<SearchHit[]>(`/search?q=${encodeURIComponent(q)}`),
   quote: (symbol: string) => getJSON<Quote>(`/quote/${encodeURIComponent(symbol)}`),
-  runs: (symbol?: string) => getJSON<RunsResponse>(`/runs${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`),
+  runs: (symbol?: string, source?: "auto" | "manual") => {
+    const q = new URLSearchParams({ ...(symbol ? { symbol } : {}), ...(source ? { source } : {}) }).toString();
+    return getJSON<RunsResponse>(`/runs${q ? `?${q}` : ""}`);
+  },
+  market: () => getJSON<MarketOverview>("/market"),
+  watchOverview: () => getJSON<{ items: WatchOverviewItem[] }>("/watchlist/overview"),
   run: (id: string) => getJSON<Result>(`/runs/${encodeURIComponent(id)}`),
   watchlist: () => getJSON<WatchResponse>("/watchlist"),
   watchAdd: (symbol: string, horizon: Horizon) => getJSON<{ ok: boolean }>("/watchlist", {
