@@ -6,7 +6,7 @@ psycopg[binary,pool]==3.3.9
 # 계량 분석
 numpy==2.5.5
 pandas==3.1.1
-# 시세·재무·애널리스트 데이터 (oracle_vm 의 midas-touch 가 쓰는 버전과 같음)
+# 시세·재무·애널리스트 데이터 (2026-11-22 에 1.4.0 -> 1.8.0. 실데이터로 판단·모듈 점수가 같음을 확인했다. midas-touch 와는 버전이 달라졌다)
 yfinance==1.8.0
 # NIM 호출 · 구글 뉴스 RSS
 httpx==0.28.1

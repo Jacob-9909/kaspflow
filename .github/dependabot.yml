@@ -14,6 +14,10 @@ updates:
     directories: [/backend, /dashboard]
     schedule: { interval: monthly }
     groups: { images: { patterns: ["*"] } }
+    ignore:
+      # 파이썬 이미지는 패치만 따라간다. 3.15 로 올리자 의존성 휠이 없어 pip install 이 실패했다. 버전은 직접 확인하고 올린다
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: monthly }
