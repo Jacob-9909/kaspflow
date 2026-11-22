@@ -8,7 +8,7 @@
 # ---------- 1단계: 빌드 ----------
 # 빌드 결과(dist)는 정적 파일이라 CPU 아키텍처와 무관하다 -> 빌드 단계는 러너 기본 플랫폼(amd64)에서 돈다.
 # arm64 를 QEMU 에뮬레이션으로 npm ci / vite build 하면 CI 에서 30분 넘게 멈추는 일이 반복됐다 (2026-10-17, 10-21).
-FROM --platform=$BUILDPLATFORM node:20-alpine AS build
+FROM --platform=$BUILDPLATFORM node:26-alpine AS build
 WORKDIR /app
 
 # 의존성 먼저 설치 (package.json 변경 없으면 캐시 재사용)
@@ -21,7 +21,7 @@ COPY . .
 RUN npm run build
 
 # ---------- 2단계: 서빙 ----------
-FROM nginx:1.27-alpine
+FROM nginx:1.29-alpine
 
 # 커스텀 nginx 설정(정적 서빙 + /api 프록시) 적용
 COPY nginx.conf /etc/nginx/conf.d/default.conf

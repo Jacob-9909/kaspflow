@@ -1,5 +1,5 @@
 # kaspflow 주식 검증기 API 이미지 (arm64 Oracle VM + amd64 로컬 공용)
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
