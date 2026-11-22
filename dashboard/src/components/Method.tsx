@@ -92,9 +92,9 @@ const MODULE_KO: [string, string][] = [
 ];
 /** 서버에 묻지 못할 때 쓰는 기본값 (backend/verdict.py WEIGHTS 와 같다) */
 const DEFAULT_W: Record<Horizon, Record<string, number>> = {
-  short: { technical: .22, strategies: .22, analogs: .08, sentiment: .16, consensus: .06, valuation: .04, quality: .02, personas: .05, regime: .15 },
-  mid: { technical: .12, strategies: .15, analogs: .06, sentiment: .10, consensus: .12, valuation: .15, quality: .12, personas: .10, regime: .08 },
-  long: { technical: .04, strategies: .05, analogs: .02, sentiment: .04, consensus: .10, valuation: .28, quality: .25, personas: .18, regime: .04 },
+  short: { technical: .24, strategies: .24, analogs: .09, sentiment: .17, consensus: .06, valuation: .04, quality: .02, personas: .06, regime: .08 },
+  mid: { technical: .13, strategies: .16, analogs: .06, sentiment: .10, consensus: .13, valuation: .16, quality: .12, personas: .10, regime: .04 },
+  long: { technical: .04, strategies: .05, analogs: .02, sentiment: .04, consensus: .10, valuation: .29, quality: .26, personas: .18, regime: .02 },
 };
 
 /** 기간별 가중치: 지금 판단에 쓰는 값(자동 조정)과 기본값, 마지막 조정 결과. 로그인하면 다시 조정하거나 기본값으로 되돌릴 수 있다. */
