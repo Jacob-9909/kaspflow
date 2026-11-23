@@ -14,13 +14,13 @@ import { PriceChart, type PriceLevel } from "./components/Charts";
 import { History, Home, RunsTable } from "./components/History";
 import Market from "./components/Market";
 import Method from "./components/Method";
-import { PlanCard, PlanSummary, PriceLevels, Reasons, RiskCard, ScoreDetail, Situation, TrendCard, VerdictHero } from "./components/Report";
+import { Figure, HorizonTable, KeyData, PlanCard, PlanSummary, PriceLevels, Reasons, ReportHead, RiskCard, ScoreDetail, Situation, TrendCard } from "./components/Report";
 import { Progress, RunPanel, type StepState } from "./components/Run";
 import Search, { rememberSymbol } from "./components/Search";
 import { Analogs, Fundamentals, News, Personas, Strategies, Valuation } from "./components/Sections";
 import { TabBar, type TabDef } from "./components/Tabs";
-import { MetaList } from "./components/ui";
-import { SECTOR_KO, big, date, dateTime, dirClass, pct, usd } from "./format";
+import { Chevron, MetaList } from "./components/ui";
+import { HORIZON_LABEL, SECTOR_KO, big, date, dateTime, dirClass, pct, usd } from "./format";
 
 type View = "home" | "symbol" | "market" | "history" | "method";
 type Route = { view: View; symbol?: string; run?: string; tab?: string };
@@ -276,8 +276,9 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
               recent={past?.runs} viewingId={result?.run_id} onOpenRun={onOpen} />
   );
 
-  const priceChart = (h: number) => result
-    ? <PriceChart candles={result.chart.candles} sma50={result.chart.sma50} sma200={result.chart.sma200} markers={sel?.markers} levels={levels} theme={theme} height={h} />
+  // 요약의 작은 차트에는 매매 화살표를 빼고 손절·목표선만 둔다 (화살표와 수익률 글자가 겹쳐 읽기 어렵다)
+  const priceChart = (h: number, arrows = true) => result
+    ? <PriceChart candles={result.chart.candles} sma50={result.chart.sma50} sma200={result.chart.sma200} markers={arrows ? sel?.markers : undefined} levels={levels} theme={theme} height={h} />
     : quote ? <PriceChart candles={quote.candles} sma50={quote.sma50} sma200={quote.sma200} theme={theme} height={h} /> : <div className="skeleton chart" style={{ height: h }} />;
 
   const runMeta = result && (
@@ -348,15 +349,30 @@ function SymbolPage({ route, me, theme, onLogin, onTab, onRunSaved, onOpen }: {
             loadingRun ? <div className="skeleton block" aria-busy="true" />
               : running && steps ? <Progress steps={steps} queued={queued} />
               : result ? (
-                <div className="stack">
-                  <VerdictHero r={result} horizon={horizon} onHorizon={setHorizon} />
-                  <Situation r={result} onOpen={onTab} />
-                  <div className="plan-row">
-                    <PlanSummary r={result} horizon={horizon} onOpen={() => onTab("simulation")} />
-                    <PriceLevels r={result} horizon={horizon} />
+                <div className="rpt">
+                  <ReportHead r={result} horizon={horizon} />
+                  <div className="rpt-body">
+                    <KeyData r={result} />
+                    <div className="rpt-main">
+                      <HorizonTable r={result} horizon={horizon} onHorizon={setHorizon} />
+                      <Reasons r={result} />
+                      <div className="rpt-pair">
+                        <Figure id="price" title="주가 추이" className="chart-card"
+                                sub={`${date(new Date(result.chart.candles[0]?.[0] * 1000).toISOString())} ~ ${date(result.as_of)}, 일봉`}
+                                action={<button className="btn outline" onClick={() => onTab("chart")}>차트 자세히<Chevron /></button>} src="Yahoo Finance">
+                          <div className="chart-legend">
+                            <span className="lg sma50">50일선</span><span className="lg sma200">200일선</span>
+                            <span className="lg lv">손절·목표 ({HORIZON_LABEL[horizon]})</span>
+                          </div>
+                          {priceChart(300, false)}
+                        </Figure>
+                        <PriceLevels r={result} horizon={horizon} />
+                      </div>
+                      <Situation r={result} onOpen={onTab} />
+                      <PlanSummary r={result} horizon={horizon} onOpen={() => onTab("simulation")} />
+                      <ScoreDetail r={result} horizon={horizon} />
+                    </div>
                   </div>
-                  <Reasons r={result} />
-                  <ScoreDetail r={result} horizon={horizon} />
                   <div className="rerun">
                     {runPanel}
                     <div>
