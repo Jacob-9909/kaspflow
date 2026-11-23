@@ -1,9 +1,10 @@
 /** 결과 요약부: 판단 히어로(기간별 눈금), 지금 상황(회사와 타이밍), 매매 계획과 시뮬레이션, 근거, 점수 계산 과정, 리스크·추세. */
-import type { Horizon, ModuleCard, Result } from "../api";
-import { HORIZON_LABEL, HORIZON_SHORT, HORIZONS, agreementWord, dirClass, num, pct, signed, usd } from "../format";
+import type { ReactNode } from "react";
+import type { Horizon, ModuleCard, Result, Verdict } from "../api";
+import { HORIZON_LABEL, HORIZON_SHORT, HORIZONS, big, dirClass, num, pct, signed, usd } from "../format";
 import { FanChart, ScoreBar } from "./Charts";
 import { Term } from "./Glossary";
-import { Chevron } from "./ui";
+import { Chevron, MetaList } from "./ui";
 import { DivBars, PlanVisual, RangeRows, TouchBar, Waterfall, ZoneScale } from "./Viz";
 
 /** 판단 엔진의 매수·매도 기준 (backend/verdict.py BUY_TH) */
@@ -12,50 +13,173 @@ const BUY_TH = 0.15;
 const TRACK = 0.6;
 const trackX = (s: number) => ((Math.max(-TRACK, Math.min(TRACK, s)) + TRACK) / (2 * TRACK)) * 100;
 
-export function VerdictHero({ r, horizon, onHorizon }: { r: Result; horizon: Horizon; onHorizon: (h: Horizon) => void }) {
-  const v = r.verdicts[horizon];
-  const tone = v.verdict === "buy" ? "up" : v.verdict === "sell" ? "down" : "hold";
-  const split = new Set(HORIZONS.map((h) => r.verdicts[h].verdict)).size > 1;
+const toneOf = (v: Verdict) => (v === "buy" ? "up" : v === "sell" ? "down" : "hold");
+const REC_KO: Record<string, string> = { strong_buy: "강력 매수", buy: "매수", hold: "보유", underperform: "비중 축소", sell: "매도" };
+
+/** 리포트 머리 그림·표의 틀: 제목 아래 굵은 선, 맨 아래 자료 출처 (증권사 리포트의 도표 형식) */
+export function Figure({ id, title, sub, src, action, className = "", children }: {
+  id: string; title: ReactNode; sub?: ReactNode; src?: ReactNode; action?: ReactNode; className?: string; children: ReactNode;
+}) {
   return (
-    <section className={`card verdict tone-${tone}`} aria-labelledby="verdict-title">
-      <div className="verdict-say">
-        <h2 id="verdict-title" className="verdict-label" tabIndex={-1}>
-          {v.strong ? "강한 " : ""}{v.label} <small>{HORIZON_LABEL[horizon]} 기준</small>
-        </h2>
-        <p className="verdict-headline">{r.narrative.headline}</p>
-        <p className="verdict-summary">{r.narrative.summary}</p>
+    <section className={`card fig ${className}`.trim()} aria-labelledby={`fig-${id}`}>
+      <header className="fig-head">
+        <h2 id={`fig-${id}`}>{title}{sub && <span className="sub">{sub}</span>}</h2>
+        {action}
+      </header>
+      {children}
+      {src && <p className="fig-src">자료: {src}</p>}
+    </section>
+  );
+}
+
+/** 리포트 첫머리: 왼쪽은 제목(한 줄 결론)과 요약, 지금 할 일. 오른쪽은 투자의견 상자와 주요 가격 */
+export function ReportHead({ r, horizon }: { r: Result; horizon: Horizon }) {
+  const v = r.verdicts[horizon], p = r.simulation.plans[horizon], price = r.quote.price;
+  // 관망·매도인데 보유하지 않았다면 목표가·손절가는 '그래도 산다면' 의 기준이다 (바로 사라는 뜻으로 읽히지 않게)
+  const ifBuying = v.verdict !== "buy" && !r.advice.holding;
+  const upside = r.fundamentals.consensus.detail?.target_upside;
+  const fair = r.fundamentals.valuation.fair_value;
+  return (
+    <section className={`card rpt-head tone-${toneOf(v.verdict)}`} aria-labelledby="verdict-title">
+      <div className="rpt-say">
+        <h2 id="verdict-title" className="rpt-title" tabIndex={-1}>{r.narrative.headline}</h2>
+        <p className="rpt-lead">{r.narrative.summary}</p>
         <div className={`advice${r.advice.holding ? " holding" : ""}`}>
           <span className="advice-tag">{r.advice.holding ? `보유 중, 평가손익 ${pct(r.advice.pnl)}` : "미보유 기준"}</span>
           {r.advice.action && <b className="advice-action">{r.advice.action}</b>}
           <p>{r.advice.text}</p>
         </div>
       </div>
-      <div className="hz">
-        <h3>기간별 판단</h3>
-        <div className="hz-rows" role="group" aria-label="판단 기간 바꾸기">
+      <aside className="rating" aria-label="투자의견과 주요 가격">
+        <div className="rating-box">
+          <span className="rating-k">투자의견<small>{HORIZON_LABEL[horizon]}</small></span>
+          <b className="rating-v">{v.strong ? "강한 " : ""}{v.label}</b>
+          <span className="rating-sub"><MetaList items={[<>종합 점수 <b className="num">{signed(v.score * 100, 0)}</b></>,
+            <>신뢰도 <b className="num">{pct(v.confidence, 0, false)}</b></>, <>근거 일치도 <b className="num">{pct(v.agreement, 0, false)}</b></>]} /></span>
+        </div>
+        <dl className="rating-kv">
+          <div><dt>현재가</dt><dd className="num">{usd(price)}<small className={dirClass(r.quote.change, 0)}>{pct(r.quote.change, 2)}</small></dd></div>
+          <div><dt>{ifBuying ? "매수 시 목표가" : "목표가"}</dt><dd className="num">{usd(p.target)}<small className="up">{pct(p.target_pct, 1)}</small></dd></div>
+          <div><dt>{ifBuying ? "매수 시 손절가" : "손절가"}</dt><dd className="num">{usd(p.stop)}<small className="down">{pct(p.stop_pct, 1)}</small></dd></div>
+          <div><dt><Term k="손익비" /></dt><dd className="num">{num(p.reward_risk, 2)} : 1</dd></div>
+          {isNum(upside) && <div><dt>애널리스트 목표가</dt><dd className="num">{usd(price * (1 + upside))}<small className={dirClass(upside, 0)}>{pct(upside, 0)}</small></dd></div>}
+          {isNum(fair) && <div><dt>추정 적정가</dt><dd className="num">{usd(fair)}<small className={dirClass(fair / price - 1, 0)}>{pct(fair / price - 1, 0)}</small></dd></div>}
+        </dl>
+      </aside>
+    </section>
+  );
+}
+
+/** 기간별 투자의견 표: 판단, 종합 점수 눈금, 시뮬레이션 핵심 수치를 한 표로. 줄을 누르면 그 기간 기준으로 바뀐다 */
+export function HorizonTable({ r, horizon, onHorizon }: { r: Result; horizon: Horizon; onHorizon: (h: Horizon) => void }) {
+  const v = r.verdicts[horizon];
+  const split = new Set(HORIZONS.map((h) => r.verdicts[h].verdict)).size > 1;
+  return (
+    <Figure id="hz" title="기간별 투자의견" sub="줄을 누르면 그 기간 기준으로 바뀝니다"
+            src={`kaspflow 판단 엔진, 몬테카를로 시뮬레이션 ${r.simulation.paths.toLocaleString()}경로`}>
+      <div className="table-wrap"><table className="table hz-table">
+        <caption className="sr-only">기간별 판단과 시뮬레이션 요약</caption>
+        <thead>
+          <tr>
+            <th>기간</th><th>투자의견</th>
+            <th className="hz-col"><Term k="종합 점수" /><span className="hz-axis" aria-hidden="true"><span>매도</span><span>관망</span><span>매수</span></span></th>
+            <th><Term k="신뢰도" /></th><th>오를 확률</th><th>예상 수익</th><th>예상 범위 90%</th><th>손절가</th><th>목표가</th>
+          </tr>
+        </thead>
+        <tbody>
           {HORIZONS.map((h) => {
-            const x = r.verdicts[h];
+            const x = r.verdicts[h], s = r.simulation.summary[h], p = r.simulation.plans[h];
             return (
-              <button key={h} type="button" aria-pressed={h === horizon} className={`hz-row v-${x.verdict}`} onClick={() => onHorizon(h)}
-                      aria-label={`${HORIZON_LABEL[h]} ${x.strong ? "강한 " : ""}${x.label}, 종합 점수 ${signed(x.score * 100, 0)}`}>
-                <span className="hz-name">{HORIZON_SHORT[h]}</span>
-                <b>{x.strong ? "강한 " : ""}{x.label}</b>
-                <span className="hz-track"><i /><i /><i /><span className="hz-pin" style={{ left: `${trackX(x.score)}%` }} /></span>
-                <span className="num hz-score">{signed(x.score * 100, 0)}</span>
-              </button>
+              <tr key={h} className={`clickable${h === horizon ? " on" : ""}`} onClick={() => onHorizon(h)}>
+                <th scope="row">
+                  <button type="button" className="hz-pick" aria-pressed={h === horizon} onClick={(e) => { e.stopPropagation(); onHorizon(h); }}
+                          aria-label={`${HORIZON_LABEL[h]} 기준으로 보기`}>{HORIZON_LABEL[h]}</button>
+                </th>
+                <td><span className={`vbadge v-${x.verdict}`}>{x.strong ? "강한 " : ""}{x.label}</span></td>
+                <td className="hz-col">
+                  <span className="hz-cell">
+                    <span className="hz-track" aria-hidden="true"><i /><i /><i /><span className="hz-pin" style={{ left: `${trackX(x.score)}%` }} /></span>
+                    <b className={`num ${dirClass(x.score, BUY_TH - 0.0001)}`}>{signed(x.score * 100, 0)}</b>
+                  </span>
+                </td>
+                <td className="num">{pct(x.confidence, 0, false)}</td>
+                <td className="num">{pct(s.p_up, 0, false)}</td>
+                <td className={`num ${dirClass(s.median, 0.001)}`}>{pct(s.median)}</td>
+                <td className="num">{pct(s.p5, 0)} ~ {pct(s.p95, 0)}</td>
+                <td className="num">{usd(p.stop)}</td>
+                <td className="num">{usd(p.target)}</td>
+              </tr>
             );
           })}
-          <div className="hz-axis" aria-hidden="true"><span>매도</span><span>관망</span><span>매수</span></div>
-        </div>
-        {split && <p className="hz-note">짧게 볼수록 타이밍(추세, 뉴스, 시장)이, 길게 볼수록 회사(가치, 재무)가 크게 반영되어 기간마다 판단이 다릅니다.</p>}
-        <dl className="verdict-stats">
-          <div><dt><Term k="종합 점수" /></dt><dd className="num">{signed(v.score * 100, 0)}</dd></div>
-          <div><dt><Term k="신뢰도" /></dt><dd className="num">{pct(v.confidence, 0, false)}</dd></div>
-          <div><dt>근거 <Term k="일치도" /></dt><dd><span className="num">{pct(v.agreement, 0, false)}</span><small>{agreementWord(v.agreement)}</small></dd></div>
-        </dl>
-        {v.notes.length > 0 && <ul className="notes">{v.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
-      </div>
-    </section>
+        </tbody>
+      </table></div>
+      {split && <p className="hint fig-note">짧게 볼수록 타이밍(추세, 뉴스, 시장)이, 길게 볼수록 회사(가치, 재무)가 크게 반영되어 기간마다 판단이 다릅니다.</p>}
+      {v.notes.length > 0 && <ul className="notes">{v.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+    </Figure>
+  );
+}
+
+/** 리포트 옆 기둥: 주가 정보, 수익률, 투자 지표, 리스크, 애널리스트 (증권사 리포트 첫 장의 Key Data 칸) */
+export function KeyData({ r }: { r: Result }) {
+  const f = r.fundamentals.facts ?? {}, lv = r.technical.levels, t = r.technical.detail, k = r.risk, q = r.quote;
+  const cons = r.fundamentals.consensus.detail;
+  const hi = lv["52주 최고"], lo = lv["52주 최저"];
+  const rows = (items: [string, ReactNode, string?][]) => (
+    <dl className="kd">
+      {items.filter(([, v]) => v !== null && v !== undefined && v !== "" && v !== "-").map(([name, v, cls]) => (
+        <div key={name}><dt>{name}</dt><dd className={`num ${cls ?? ""}`.trim()}>{v}</dd></div>
+      ))}
+    </dl>
+  );
+  const rets = ([["ret_1m", "1개월"], ["ret_3m", "3개월"], ["ret_6m", "6개월"], ["ret_12m", "1년"]] as const).filter(([key]) => isNum(t[key]));
+  const ratios = ["PER", "선행 PER", "PBR", "EV/EBITDA", "ROE", "영업이익률", "배당수익률", "부채비율(D/E)"].filter((x) => f[x]);
+  const rec = typeof cons?.rec_key === "string" ? REC_KO[cons.rec_key] ?? cons.rec_key : null;
+  const analysts = isNum(cons?.analysts) ? cons.analysts : null;
+  const upside = isNum(cons?.target_upside) ? cons.target_upside : null;
+  return (
+    <aside className="card rpt-side" aria-label="주요 데이터">
+      <section>
+        <h3>주가 정보</h3>
+        {rows([
+          ["현재가", usd(q.price)], ["전일 대비", pct(q.change, 2), dirClass(q.change, 0)], ["시가총액", big(q.market_cap)],
+          ["52주 최고", isNum(hi) ? usd(hi) : null], ["52주 최저", isNum(lo) ? usd(lo) : null],
+        ])}
+        {isNum(hi) && isNum(lo) && hi > lo && (
+          <div className="kd-range" role="img" aria-label={`52주 범위에서 현재가 위치 ${pct((q.price - lo) / (hi - lo), 0, false)}`}>
+            <span className="kd-track"><i style={{ left: `${Math.max(0, Math.min(100, ((q.price - lo) / (hi - lo)) * 100))}%` }} /></span>
+            <span className="kd-ends"><span>최저</span><span>52주 범위 안 위치 {pct((q.price - lo) / (hi - lo), 0, false)}</span><span>최고</span></span>
+          </div>
+        )}
+      </section>
+      {rets.length > 0 && (
+        <section>
+          <h3>주가 수익률</h3>
+          <table className="kd-ret">
+            <caption className="sr-only">기간별 주가 수익률</caption>
+            <thead><tr>{rets.map(([key, label]) => <th key={key} scope="col">{label}</th>)}</tr></thead>
+            <tbody><tr>{rets.map(([key]) => <td key={key} className={`num ${dirClass(t[key] as number, 0)}`}>{pct(t[key] as number)}</td>)}</tr></tbody>
+          </table>
+          {isNum(t.rel_strength_6m) && <p className="kd-note">S&amp;P500 대비 6개월 <b className={`num ${dirClass(t.rel_strength_6m, 0)}`}>{pct(t.rel_strength_6m)}</b></p>}
+        </section>
+      )}
+      {ratios.length > 0 && (
+        <section>
+          <h3>투자 지표</h3>
+          {rows(ratios.map((x) => [x, f[x]] as [string, string]))}
+        </section>
+      )}
+      <section>
+        <h3>리스크 <span className={`tag risk-${RISK_CLS[k.level] ?? "mid"}`}>{k.level}</span></h3>
+        {rows([["연 변동성", pct(k.vol_1y, 1, false)], ["베타 (S&P500)", num(k.beta, 2)], ["1년 최대 낙폭", pct(k.mdd_1y), "down"], ["하루 VaR 95%", pct(-k.var95_1d)]])}
+      </section>
+      {(rec || isNum(upside)) && (
+        <section>
+          <h3>애널리스트</h3>
+          {rows([["투자의견", rec ? `${rec}${analysts ? ` (${analysts}명)` : ""}` : null],
+            ["목표가 평균", isNum(upside) ? usd(q.price * (1 + upside)) : null], ["현재가 대비", isNum(upside) ? pct(upside) : null, dirClass(upside, 0)]])}
+        </section>
+      )}
+    </aside>
   );
 }
 
@@ -130,9 +254,10 @@ export function Situation({ r, onOpen }: { r: Result; onOpen: (tab: string) => v
   });
   const [company, timing] = groups.map((g) => g.score);
   return (
-    <section className="card situation" aria-labelledby="sit-title">
+    <Figure id="sit" title="지금 상황" sub="모듈별 점수 -100~+100, 누르면 근거 탭으로" className="situation-fig"
+            src="kaspflow 판단 엔진 9개 모듈 (묶음 점수는 신뢰도 가중 평균)">
+     <div className="situation">
       <div className="sit-over">
-        <h2 id="sit-title">지금 상황</h2>
         <p className="sit-lead">
           {groups.filter((g) => g.score !== null).map((g, i) => (
             <span key={g.key}>{i > 0 && ", "}{g.label} <b className={LEVEL_CLS[level(g.score as number)]}>{g.words[level(g.score as number)]}</b></span>
@@ -164,7 +289,8 @@ export function Situation({ r, onOpen }: { r: Result; onOpen: (tab: string) => v
           </ul>
         </div>
       ))}
-    </section>
+     </div>
+    </Figure>
   );
 }
 
@@ -214,15 +340,16 @@ export function Reasons({ r }: { r: Result }) {
     </div>
   );
   return (
-    <section className="card reasons" aria-label="판단 근거">
-      {col("매수 근거", n.bull, "r-up")}
-      {col("매도 근거", n.bear, "r-down")}
-      {col("주의할 위험", n.risks, "r-warn")}
-      {col("판단이 바뀌는 조건", n.triggers, "r-accent")}
-      <p className="hint wide">
-        {r.meta.narrative_error ? `AI 해설을 만들지 못해 계량 결과로 대신했습니다 (${r.meta.narrative_error}).` : `해설은 AI(${(r.meta.llm_model ?? "").split("/").pop()})가 썼습니다.`}
-        {" "}판단은 계량 엔진이 정하고, 해설은 판단을 바꾸지 못합니다.</p>
-    </section>
+    <Figure id="points" title="투자 포인트" className="points"
+            src={<>판단은 kaspflow 계량 엔진, {r.meta.narrative_error ? `해설은 계량 결과로 대신함 (AI 해설 실패: ${r.meta.narrative_error})` : `해설은 AI(${(r.meta.llm_model ?? "").split("/").pop()})`}.
+              {" "}해설은 판단을 바꾸지 못합니다.</>}>
+      <div className="reasons">
+        {col("매수 근거", n.bull, "r-up")}
+        {col("매도 근거", n.bear, "r-down")}
+        {col("주의할 위험", n.risks, "r-warn")}
+        {col("판단이 바뀌는 조건", n.triggers, "r-accent")}
+      </div>
+    </Figure>
   );
 }
 
@@ -234,11 +361,9 @@ export function PlanSummary({ r, horizon, onOpen }: { r: Result; horizon: Horizo
   // 관망·매도인데 보유하지 않았다면, 이 계획은 '그래도 산다면' 의 기준이다 (바로 사라는 뜻으로 읽히지 않게)
   const ifBuying = v.verdict !== "buy" && !r.advice.holding;
   return (
-    <section className="card plan-summary" aria-labelledby="plan-sum-title">
-      <div className="panel-head">
-        <h2 id="plan-sum-title">{ifBuying ? "그래도 산다면" : "매매 계획"} <span className="sub">{HORIZON_LABEL[horizon]} 시뮬레이션</span></h2>
-        <button className="btn outline" onClick={onOpen}>시뮬레이션 자세히<Chevron /></button>
-      </div>
+    <Figure id="plan" title={ifBuying ? "그래도 산다면" : "매매 계획"} sub={`${HORIZON_LABEL[horizon]} 시뮬레이션`} className="plan-summary"
+            action={<button className="btn outline" onClick={onOpen}>시뮬레이션 자세히<Chevron /></button>}
+            src={`최근 3년 수익률 블록 부트스트랩 ${r.simulation.paths.toLocaleString()}경로, 손절·목표는 ATR 기준`}>
       {ifBuying && <p className="hint plan-note">지금은 {v.label} 구간입니다. 아래는 사기로 했을 때 쓸 기준입니다.</p>}
       <div className="plan-grid">
         <div className="stack">
@@ -252,7 +377,7 @@ export function PlanSummary({ r, horizon, onOpen }: { r: Result; horizon: Horizo
         </div>
         <FanChart fan={r.simulation.summary.fan} days={s.days} price={p.entry} stop={p.stop} target={p.target} />
       </div>
-    </section>
+    </Figure>
   );
 }
 
@@ -267,11 +392,10 @@ export function PriceLevels({ r, horizon }: { r: Result; horizon: Horizon }) {
     ["200일선", lv["200일선"] ?? lv.SMA200], ["50일선", lv["50일선"] ?? lv.SMA50], ["52주 최고", lv["52주 최고"]], ["52주 최저", lv["52주 최저"]],
   ] as [string, number | null | undefined][]).filter((x): x is [string, number] => isNum(x[1])).sort((a, b) => b[1] - a[1]);
   return (
-    <section className="card levels-map" aria-labelledby="lv-title">
-      <h2 id="lv-title">가격 위치 <span className="sub">가운데 선이 현재가 {usd(price)}</span></h2>
+    <Figure id="lv" title="가격 위치" sub={`가운데 선이 현재가 ${usd(price)}`} className="levels-map" src="Yahoo Finance, 애널리스트 컨센서스, kaspflow 가치평가">
       <DivBars label="현재가 대비 주요 가격대" fmt={(x) => pct(x, 0)}
                rows={rows.map(([name, v]) => ({ key: name, label: <>{name}<small className="num">{usd(v)}</small></>, value: v / price - 1 }))} />
-    </section>
+    </Figure>
   );
 }
 
