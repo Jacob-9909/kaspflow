@@ -149,7 +149,7 @@ class TestSimulation(unittest.TestCase):
 
     def test_analogs_and_risk(self):
         df = ohlcv(2600, seed=4)
-        a = sim.analogs(df, "short")
+        a = sim.analogs(df, ["short"])["short"]
         self.assertIn("available", a)
         if a["available"]:
             self.assertTrue(-1 <= a["score"] <= 1)

@@ -51,10 +51,11 @@ def evaluate(df: pd.DataFrame, spy: pd.Series, vix: pd.Series, tnx: pd.Series, s
         risk = sim.risk_profile(d, spy_t)
         tech = vd.technical(d, spy_t)
         reg = vd.regime(spy_t, vix_t, tnx_t, sec_t, sec_sym, risk["beta"])
+        an = sim.analogs(d, sim.HORIZONS)
         for h, n in sim.HORIZONS.items():
             if i + n >= len(df):
                 continue
-            mods = {"technical": tech, "regime": reg, "analogs": sim.analogs(d, h)}
+            mods = {"technical": tech, "regime": reg, "analogs": an[h]}
             v = vd.combine(mods, h, risk, None)
             rows.append({"h": h, "date": str(t.date()), "sym": sym, "verdict": v["verdict"], "conf": v["confidence"],
                          "ret": float(c.iloc[i + n] / c.iloc[i] - 1),

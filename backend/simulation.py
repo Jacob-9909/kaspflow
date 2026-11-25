@@ -107,20 +107,22 @@ def trade_plan(price: float, atr_value: float, paths: np.ndarray, horizon: str,
     return plan
 
 
-def _rsi_zone(r: float) -> int:
-    return 0 if r < 30 else (2 if r > 70 else 1)
-
-
 ZONE_LABEL = {0: "RSI 30 미만", 1: "RSI 30~70", 2: "RSI 70 초과"}
 
 
-def analogs(df: pd.DataFrame, horizon: str, ppy: int = 252) -> dict:
-    h = bars(HORIZONS[horizon], ppy)
+def analogs(df: pd.DataFrame, horizons, ppy: int = 252) -> dict[str, dict]:
+    """기간별 유사 국면 {기간: 결과}. 국면(200일선, 3개월 모멘텀, RSI 구간)은 기간과 상관없어 한 번만 계산한다."""
     c = df["Close"]
     s200, mom, r = ta.sma(c, 200), c / c.shift(bars(63, ppy)) - 1, ta.rsi(c, 14)
     ok = s200.notna() & mom.notna() & r.notna()
-    state = ((c > s200).astype(int) * 100 + (mom > 0).astype(int) * 10
-             + r.fillna(50).map(_rsi_zone)).where(ok)
+    rz = r.fillna(50)
+    zone = 1 - (rz < 30).astype(int) + (rz > 70).astype(int)   # ZONE_LABEL 의 0/1/2
+    state = ((c > s200).astype(int) * 100 + (mom > 0).astype(int) * 10 + zone).where(ok)
+    return {h: _analog(c, state, ok, h, ppy) for h in horizons}
+
+
+def _analog(c: pd.Series, state: pd.Series, ok: pd.Series, horizon: str, ppy: int) -> dict:
+    h = bars(HORIZONS[horizon], ppy)
     fwd = c.shift(-h) / c - 1
     valid = ok & fwd.notna()
     if valid.sum() < 250 or pd.isna(state.iloc[-1]):
