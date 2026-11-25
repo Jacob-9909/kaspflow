@@ -31,3 +31,6 @@ dashboard/dist/
 *.tsbuildinfo
 
 .playwright-mcp/
+
+# --- fast-anything (로컬 프로파일·Rust 포트 빌드물, 머신별로 다시 만든다) ---
+.fast/

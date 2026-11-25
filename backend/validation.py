@@ -93,12 +93,17 @@ def permutation_p(held: np.ndarray, mkt: np.ndarray, rf_d: np.ndarray, fee: floa
     if n < 120 or held.min() == held.max():
         return None
     actual = _per_period_sr(_approx_returns(held, mkt, rf_d, fee), rf_d)
-    shifts = rng.integers(20, n - 20, size=N_PERM)
+    sr = shifted_srs(held, mkt, rf_d, fee, rng.integers(20, n - 20, size=N_PERM))
+    return float((1 + np.sum(sr >= actual)) / (N_PERM + 1))
+
+
+def shifted_srs(held: np.ndarray, mkt: np.ndarray, rf_d: np.ndarray, fee: float, shifts: np.ndarray) -> np.ndarray:
+    """보유 배열을 shifts 만큼씩 원형 이동했을 때의 per-period 샤프 (순열 검정의 무거운 부분, 난수 없음)."""
+    n = len(held)
     idx = (np.arange(n)[None, :] - shifts[:, None]) % n
     sims = _approx_returns(held[idx], mkt[None, :], rf_d[None, :], fee)
     sd = sims.std(axis=1, ddof=1)
-    sr = np.divide((sims - rf_d[None, :]).mean(axis=1), sd, out=np.zeros(N_PERM), where=sd > 0)
-    return float((1 + np.sum(sr >= actual)) / (N_PERM + 1))
+    return np.divide((sims - rf_d[None, :]).mean(axis=1), sd, out=np.zeros(len(shifts)), where=sd > 0)
 
 
 def random_day_p(trade_rets: np.ndarray, baseline: np.ndarray, rng) -> float | None:
@@ -277,3 +282,22 @@ def strategy_score(v: dict) -> dict:
                  f"신호 없음 {n - len(longs) - len(shorts)}개" if n > len(longs) + len(shorts) else ""]
         summary = f"검증을 통과한 전략 {n}개 중 " + ", ".join(p for p in parts if p)
     return {"score": round(score, 3), "confidence": round(conf, 3), "summary": summary}
+
+# >>> fast-anything: validation.shifted_srs >>>
+# Uses the verified Rust port. FAST_ANYTHING_DISABLE=1 runs the Python above instead.
+# Undo with:  fast-anything disable validation.shifted_srs
+def _fast_anything_load():
+    import os, sys
+    if os.environ.get("FAST_ANYTHING_DISABLE"):
+        return None
+    lib = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".fast/lib"))
+    if lib not in sys.path:
+        sys.path.append(lib)
+    try:
+        from fa_validation_shifted_srs import shifted_srs
+    except ImportError:
+        return None
+    return shifted_srs
+shifted_srs = _fast_anything_load() or shifted_srs
+del _fast_anything_load
+# <<< fast-anything: validation.shifted_srs <<<
