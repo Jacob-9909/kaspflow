@@ -128,7 +128,7 @@ async def run(symbol: str, horizon: str, position: dict | None, cache, llm, load
         risk = sim.risk_profile(df, spy, ppy)
         tech = vd.technical(df, spy)
         reg = vd.regime(spy, vix, tnx, sector, sec.get("symbol"), risk["beta"])
-        analogs = {h: sim.analogs(df, h, ppy) for h in sim.HORIZONS}
+        analogs = sim.analogs(df, sim.HORIZONS, ppy)
         return risk, tech, reg, analogs
 
     risk, tech, reg, analogs = await asyncio.to_thread(cpu_technical)
