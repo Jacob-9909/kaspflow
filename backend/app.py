@@ -7,6 +7,7 @@
   GET  /runs                   실행 기록 + 판단 뒤 수익률·적중 여부
   GET  /runs/{id}              저장된 결과 전체
   GET  /watchlist              관심 종목과 최근 판단 (POST·DELETE /watchlist 는 로그인 필요)
+  GET  /market/leaders         업종 ETF 11개의 상위 보유 5종목: 시세와 기본 지표 (NIM·백테스트 없음, 30분 캐시)
   GET  /weights                판단 엔진 가중치 (기본값, 지금 값, 자동 조정 기록). POST /weights/tune|reset 은 로그인 필요
   POST /auth/login|logout, GET /auth/me   비밀번호 로그인 (APP_PASSWORD)
 
@@ -250,6 +251,15 @@ def health():
                         "next_at": _slot(datetime.now(timezone.utc), 1).isoformat()},
             "tuning": {"last_at": S.ops.get("tune_at"), "running": S.tuning}, "last_error": S.ops.get("last_error")}
     return JSONResponse(body, status_code=200 if db_ok else 503)
+
+
+@app.get("/market/leaders")
+async def market_leaders():
+    """업종별 대표 종목: 업종 ETF 가 가장 많이 담은 5종목의 등락, 200일선·52주 고점 대비, PER, 목표가 대비 (30분 캐시)."""
+    try:
+        return await asyncio.to_thread(overview.sector_leaders, _store())
+    except LookupError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @app.get("/market")

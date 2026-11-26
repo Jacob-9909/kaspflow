@@ -226,6 +226,41 @@ class TestAPI(unittest.TestCase):
         self.assertIn(body["vix"]["word"], ("안정", "보통", "높음", "매우 높음"))
         self.assertIn("market:overview", self.db.d)                 # 묶은 결과를 캐시한다
 
+    def test_market_leaders_from_cache(self):
+        import overview
+        start = (datetime.now() - timedelta(days=420)).strftime("%Y-%m-%d")
+        for i, (etf, _) in enumerate(overview.SECTORS):
+            syms = [f"S{i}X{j}" for j in range(overview.LEADERS_N)]
+            self.db.set(f"yf:holdings:{etf}", [{"symbol": s, "name": s, "weight": 0.1} for s in syms])
+            for j, s in enumerate(syms):
+                self.db.set(f"yf:series:{s}:2y", to_cache(ohlcv(300, seed=100 + i * 10 + j, start=start)))
+                self.db.set(f"yf:info:{s}", {"shortName": f"{s} Inc.", "marketCap": 1e12, "trailingPE": 30.0, "forwardPE": 25.0, "targetMeanPrice": 1e6})
+        body = self.c.get("/market/leaders").json()
+        self.assertEqual(len(body["sectors"]), 11)
+        first = body["sectors"][0]
+        self.assertEqual((first["symbol"], len(first["leaders"])), ("XLK", 5))
+        row = first["leaders"][0]
+        self.assertTrue(set(("symbol", "name", "price", "d1", "w1", "m1", "vs_200", "from_high", "pe", "forward_pe", "target_upside")) <= set(row))
+        self.assertEqual(row["name"], "S0X0")                       # 회사명 꼬리(Inc.)는 뗀다
+        self.assertGreater(row["target_upside"], 0)
+        self.assertIn("market:leaders", self.db.d)                  # 묶은 결과를 캐시한다
+
+    def test_leaders_keep_one_share_class_per_company(self):
+        import overview
+        rows = [{"symbol": s, "name": n, "weight": 0.1} for s, n in
+                [("META", "Meta Platforms Inc Class A"), ("GOOGL", "Alphabet Inc Class A"), ("GOOG", "Alphabet Inc Class C"), ("DIS", "Walt Disney Co")]]
+        self.assertEqual([r["symbol"] for r in overview.top_unique(rows, 3)], ["META", "GOOGL", "DIS"])
+
+    def test_market_leaders_unavailable(self):
+        import overview
+        real = overview._holdings
+        overview._holdings = lambda etf: None                       # 보유 종목을 못 받으면 503
+        try:
+            r = self.c.get("/market/leaders")
+        finally:
+            overview._holdings = real
+        self.assertEqual(r.status_code, 503)
+
     def test_market_overview_unavailable(self):
         real, appmod.market._history = appmod.market._history, lambda sym, period: None   # 시세를 못 받으면 503 과 안내 문장
         try:

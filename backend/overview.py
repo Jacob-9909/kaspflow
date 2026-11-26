@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -17,6 +18,8 @@ SECTORS = [("XLK", "기술"), ("XLC", "커뮤니케이션"), ("XLY", "경기소�
            ("XLP", "필수소비재"), ("XLE", "에너지"), ("XLB", "소재"), ("XLU", "유틸리티"), ("XLRE", "부동산")]
 TTL = 1800
 SPARK_DAYS, SPARK_POINTS = 126, 63   # 최근 6개월을 63점으로
+LEADERS_N = 5                         # 업종마다 대표 종목 수
+HOLD_TTL = 7 * 24 * 3600              # ETF 상위 보유 종목은 자주 안 바뀐다
 
 
 def stats(p: dict | None) -> dict | None:
@@ -82,4 +85,87 @@ def market_overview(cache: market.Cache) -> dict:
         return hit
     out = build(cache)
     cache.set("market:overview", out)
+    return out
+
+
+# ------------------------------------------------------------
+# 업종별 대표 종목: 업종 ETF 가 가장 많이 담은 종목. 시세와 기본 지표만 (NIM·백테스트 없음, 공개 경로)
+# 블로그(dongne-jiwon 머니이정표)의 미국 증시 글이 읽는다. 관심 종목 자동 판단과는 따로다
+
+def top_unique(rows: list[dict], n: int) -> list[dict]:
+    """같은 회사의 다른 주식(알파벳 Class A·C 같은)은 하나만 남기고 n 개까지"""
+    out, seen = [], set()
+    for r in rows:
+        key = re.sub(r"\s+(class|cl\.?)\s+[a-z]\b.*$", "", r["name"].lower()).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+        if len(out) == n:
+            break
+    return out
+
+
+def _holdings(etf: str) -> list[dict] | None:
+    import yfinance as yf
+    th = yf.Ticker(etf).funds_data.top_holdings
+    if th is None or th.empty:
+        return None
+    name_col = "Name" if "Name" in th.columns else None
+    rows = [{"symbol": str(sym), "name": str(th.loc[sym, name_col]) if name_col else str(sym), "weight": round(float(th.loc[sym].iloc[-1]), 4)}
+            for sym in th.index]
+    return top_unique(rows, LEADERS_N)
+
+
+def build_leaders(cache: market.Cache) -> dict:
+    def hold(etf: str) -> list[dict]:
+        try:
+            return market._cached(cache, f"yf:holdings:{etf}", HOLD_TTL, lambda: _holdings(etf)) or []
+        except Exception as exc:  # noqa: BLE001 - 한 업종을 못 받아도 나머지는 보여 준다
+            market.log.warning("holdings %s: %r", etf, exc)
+            return []
+
+    def one(sym: str) -> tuple[str, dict | None, dict]:
+        try:
+            ser = market._cached(cache, f"yf:series:{sym}:2y", market.TTL["series"], lambda: market._history(sym, "2y"))
+        except Exception as exc:  # noqa: BLE001
+            market.log.warning("leaders series %s: %r", sym, exc)
+            ser = None
+        try:
+            info = market._cached(cache, f"yf:info:{sym}", market.TTL["info"], lambda: market._info(sym)) or {}
+        except Exception as exc:  # noqa: BLE001
+            market.log.warning("leaders info %s: %r", sym, exc)
+            info = {}
+        return sym, stats(ser), info
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        holds = dict(zip([e for e, _ in SECTORS], ex.map(hold, [e for e, _ in SECTORS])))
+        syms = sorted({h["symbol"] for hs in holds.values() for h in hs})
+        got = {sym: (st, info) for sym, st, info in ex.map(one, syms)}
+    sectors = []
+    for etf, name in SECTORS:
+        rows = []
+        for h in holds[etf]:
+            st, info = got.get(h["symbol"], (None, {}))
+            if not st:
+                continue
+            target = market._num(info.get("targetMeanPrice"))
+            rows.append({"symbol": h["symbol"], "name": market.short_name(info, h["name"]) if info else h["name"], "weight": h["weight"],
+                         **{k: st[k] for k in ("price", "as_of", "d1", "w1", "m1", "ytd", "vs_200", "from_high")},
+                         "market_cap": market._num(info.get("marketCap")), "pe": market._num(info.get("trailingPE")),
+                         "forward_pe": market._num(info.get("forwardPE")),
+                         "target_upside": round(target / st["price"] - 1, 4) if target and st["price"] else None})
+        sectors.append({"symbol": etf, "name": name, "leaders": rows})
+    if not any(s["leaders"] for s in sectors):
+        raise LookupError("업종 대표 종목 데이터를 불러오지 못했습니다. 잠시 뒤 다시 시도하세요.")
+    return {"as_of": max(r["as_of"] for s in sectors for r in s["leaders"]), "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "sectors": sectors}
+
+
+def sector_leaders(cache: market.Cache) -> dict:
+    hit = cache.get("market:leaders", TTL)
+    if hit is not None:
+        return hit
+    out = build_leaders(cache)
+    cache.set("market:leaders", out)
     return out
